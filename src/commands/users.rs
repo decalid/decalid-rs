@@ -1,24 +1,16 @@
 use anyhow::Result;
-use sqlx::SqlitePool;
 
-use crate::models::User;
+use crate::db::Db;
 
 
-pub async fn create_user(pool: &SqlitePool, username: &str) -> Result<()> {
-    let user = sqlx::query_as::<_, User>("INSERT INTO users (username) VALUES (?) RETURNING *")
-        .bind(username)
-        .fetch_one(pool)
-        .await?;
-
+pub async fn create_user(db: &Db, username: &str) -> Result<()> {
+    let user = db.admin().create_user(username).await?;
     println!("User created: {:?}", user);
-
     Ok(())
 }
 
-pub async fn list_users(pool: &SqlitePool) -> Result<()> {
-    let users = sqlx::query_as::<_, User>("SELECT * FROM users")
-        .fetch_all(pool)
-        .await?;
+pub async fn list_users(db: &Db) -> Result<()> {
+    let users = db.admin().list_users().await?;
 
     println!("Users:");
     for user in users {

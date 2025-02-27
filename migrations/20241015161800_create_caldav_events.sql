@@ -23,14 +23,7 @@ CREATE TABLE calendar_sources (
     FOREIGN KEY (calendar_id) REFERENCES calendars (id) ON DELETE CASCADE
 );
 
-CREATE TABLE calendar_shares (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    calendar_id INTEGER NOT NULL,
-    url_slug TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (calendar_id) REFERENCES calendars (id) ON DELETE CASCADE
-);
+CREATE UNIQUE INDEX idx_calendar_sources_calendar_id ON calendar_sources (calendar_id);
 
 
 CREATE TABLE events (
@@ -53,7 +46,7 @@ CREATE TABLE event_versions (
     dtend TIMESTAMP,
     duration TEXT,
     rrule TEXT,
-    rdate TEXT,
+    exrule TEXT,
     exdate TEXT,
     status TEXT,
     organizer TEXT,
@@ -64,6 +57,8 @@ CREATE TABLE event_versions (
     transp TEXT,
     sequence INTEGER,
     raw_data TEXT NOT NULL,
+    is_all_day INTEGER NOT NULL DEFAULT 0,
+    last_repeat TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_retrieved_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (event_id) REFERENCES events (id) ON DELETE CASCADE
@@ -135,3 +130,20 @@ AFTER UPDATE ON events
 BEGIN
     UPDATE events SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
 END;
+
+CREATE TABLE share_roots (
+    id TEXT PRIMARY KEY,
+    owner_id INTEGER NOT NULL,
+    FOREIGN KEY (owner_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
+CREATE TABLE share_collections (
+    id TEXT PRIMARY KEY,
+    root_id TEXT,
+    calendar_id INTEGER,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP,
+    description TEXT,
+    FOREIGN KEY (root_id) REFERENCES share_roots (id) ON DELETE CASCADE,
+    FOREIGN KEY (calendar_id) REFERENCES calendars (id) ON DELETE CASCADE
+);

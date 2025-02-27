@@ -1,9 +1,11 @@
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 
-pub mod ics;
 pub mod calendars;
 pub mod users;
+pub mod caldav;
+pub mod jwt;
+pub mod timezones;
 
 
 #[derive(Parser)]
@@ -51,5 +53,62 @@ pub(crate) enum Commands {
 
         #[arg(short, long, default_value = "10")]
         max_results: i64,
+    },
+    CreateShareRoot {
+        #[arg(short, long)]
+        share_name: String,
+
+        #[arg(short, long)]
+        owner_id: i64,
+    },
+    AddCalendarToShare {
+        #[arg(short, long)]
+        share_root: String,
+
+        #[arg(short, long)]
+        calendar_id: i64,
+
+        #[arg(short, long)]
+        description: String,        
+    },
+    AddCalDavSource {
+        #[arg(short, long)]
+        calendar_id: i64,
+        
+        #[arg(short, long)]
+        url: String,
+        
+        #[arg(short, long)]
+        username: Option<String>,
+        
+        #[arg(short, long)]
+        password: Option<String>,
+        
+        #[arg(short, long)]
+        token: Option<String>,
+    },
+    SyncCalDavCalendar {
+        #[arg(short, long)]
+        calendar_id: i64,
+    },
+    ListTimezones,
+    ImportTimezone {
+        #[arg(short, long)]
+        file: String,
+    },
+    ShowTimezone {
+        #[arg(short, long)]
+        tzid: String,
+    },
+    SetCalendarTimezone {
+        #[arg(short, long)]
+        calendar_id: i64,
+        
+        #[arg(short, long)]
+        tzid: String,
+    },
+    Server {
+        #[arg(short, long)]
+        port: Option<u16>,
     }
 }

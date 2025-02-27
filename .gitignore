@@ -24,4 +24,4 @@ Cargo.lock
 
 /target
 
-db.sqlite
+db.sqlite*

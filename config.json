@@ -1,0 +1,28 @@
+{
+  "database_url": "sqlite://./db.sqlite",
+  "server": {
+    "port": 8080,
+    "host": "127.0.0.1"
+  },
+  "telemetry": {
+    "enable_opentelemetry": false,
+    "enable_sentry": false,
+    "sentry_dsn": null,
+    "log_level": "info"
+  },
+  "cache": {
+    "enable": true,
+    "ttl_seconds": 3600,
+    "max_size": 1000
+  },
+  "auth": {
+    "jwt_secret": "change_me_in_production",
+    "jwt_expiration_seconds": 86400,
+    "pairing_code_expiration_seconds": 300,
+    "webauthn": {
+      "rp_id": "decalid.com",
+      "rp_origin": "https://cal.decalid.com",
+      "rp_name": "Decalid"
+    }
+  }
+}

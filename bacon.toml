@@ -1,0 +1,6 @@
+[jobs.run-server]
+env.RUST_LOG = "debug"
+env.RUST_BACKTRACE = "1"
+command = ["cargo", "run", "--", "server"]
+background = false
+on_change_strategy = "kill_then_restart"
