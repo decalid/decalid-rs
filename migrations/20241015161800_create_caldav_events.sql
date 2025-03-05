@@ -137,13 +137,38 @@ CREATE TABLE share_roots (
     FOREIGN KEY (owner_id) REFERENCES users (id) ON DELETE CASCADE
 );
 
-CREATE TABLE share_collections (
+CREATE TABLE share_virtualcalendars (
     id TEXT PRIMARY KEY,
     root_id TEXT,
-    calendar_id INTEGER,
     created_at TIMESTAMP,
     updated_at TIMESTAMP,
     description TEXT,
-    FOREIGN KEY (root_id) REFERENCES share_roots (id) ON DELETE CASCADE,
-    FOREIGN KEY (calendar_id) REFERENCES calendars (id) ON DELETE CASCADE
+    FOREIGN KEY (root_id) REFERENCES share_roots (id) ON DELETE CASCADE
+);
+
+CREATE TABLE share_virtualcalendars_to_sources (
+    virtualcalendar_id TEXT NOT NULL,
+    calendar_source_id TEXT NOT NULL,
+    FOREIGN KEY (virtualcalendar_id) REFERENCES share_virtualcalendars (id) ON DELETE CASCADE,
+    FOREIGN KEY (calendar_source_id) REFERENCES calendar_sources (id) ON DELETE CASCADE
+);
+
+CREATE TABLE filters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    filter TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PRV',
+    body TEXT NOT NULL,
+    creator_id INTEGER NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (creator_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
+CREATE TABLE share_virtualcalendar_filters (
+    id TEXT PRIMARY KEY,
+    virtualcalendar_id TEXT NOT NULL,
+    filter_id INTEGER NOT NULL,
+    FOREIGN KEY (virtualcalendar_id) REFERENCES share_virtualcalendars (id) ON DELETE CASCADE,
+    FOREIGN KEY (filter_id) REFERENCES filters (id) ON DELETE CASCADE
 );
