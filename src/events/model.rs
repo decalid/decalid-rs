@@ -22,8 +22,7 @@ pub(crate) type EventPropertyMap = BTreeMap<String, Vec<EventProperty>>;
 /// alternatives. For example, we will always specify a dtend and never a
 /// duration unless we are given an event with one, but we'll canonicalize it
 /// into dtend.
-#[allow(unused)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ParsedEvent {
     /// Alternate text representation, if available. If defined, it must be a
     /// URI pointing to an alternate representation for a textual property
@@ -84,7 +83,7 @@ pub struct DecalidEvent {
     pub first_start_time: DateTime<Utc>,
     pub last_end_time: DateTime<Utc>,
     pub is_all_day: bool,
-    pub(crate) recurrence_set: rrule::RRuleSet,
+    pub recurrence_set: rrule::RRuleSet,
 }
 
 fn slice2btreemap<KA: Ord, KB: Ord, B: Clone>(

@@ -136,4 +136,26 @@ impl Db {
                 .fetch_one(&self.0)
                 .await
     }
+
+    pub async fn get_filters(&self, share_id: &str, calendar_id: &str) -> Result<Vec<Filter>> {
+        // Query to get filters associated with a virtual calendar
+        // We join share_virtualcalendar_filters with filters table
+        // to get the filter details
+        let filters = sqlx::query_as::<_, Filter>(
+            r#"SELECT f.* 
+               FROM filters f
+               JOIN share_virtualcalendar_filters svf ON f.id = svf.filter_id
+               JOIN share_virtualcalendars sv ON svf.virtualcalendar_id = sv.id
+               JOIN share_roots sr ON sv.root_id = sr.id
+               WHERE sv.id = ? AND sr.id = ?
+               ORDER BY f.created_at DESC"#
+        )
+        .bind(calendar_id)
+        .bind(share_id)
+        .fetch_all(&self.0)
+        .await?
+        ;
+
+        Ok(filters)
+    }
 }

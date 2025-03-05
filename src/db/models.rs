@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
 
+use crate::transformation;
+
 #[allow(unused)]
 #[derive(Debug, sqlx::FromRow)]
 pub struct User {
@@ -55,12 +57,54 @@ pub struct CalendarSource {
 
 #[allow(unused)]
 #[derive(Debug, sqlx::FromRow)]
-pub struct CalendarShare {
-    pub id: i64,
-    pub calendar_id: i64,
-    pub url_slug: String,
+pub struct CalendarShareRoot {
+    pub id: String,
+    pub owner_id: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[allow(unused)]
+#[derive(Debug, sqlx::FromRow)]
+pub struct SharedVirtualCalendar {
+    pub id: String,
+    pub root_id: String,
+    pub description: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, sqlx::Type)]
+#[sqlx(type_name = "filter_status")]
+pub enum FilterStatus {
+    #[sqlx(rename = "PRV")]
+    Private,
+    #[sqlx(rename = "REV")]
+    UnderReview,
+    #[sqlx(rename = "RJ")]
+    ReviewRejected,
+    #[sqlx(rename = "PUB")]
+    Published,
+}
+
+#[allow(unused)]
+#[derive(Debug, sqlx::FromRow)]
+pub struct Filter {
+    pub id: i64,
+    pub name: String,
+    pub filter: FilterStatus,
+    pub status: String,
+    pub body: String,
+    pub creator_id: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+impl Filter {
+    pub(crate) async fn apply(&self, filtered_calendar_events: &[EventVersion]) -> anyhow::Result<Vec<EventVersion>> {
+        let mut engine = transformation::DslEngine::new();
+        engine.compile(&self.body)?;
+        engine.filter_events(filtered_calendar_events.iter().cloned())
+    }
 }
 
 #[allow(unused)]
@@ -74,7 +118,7 @@ pub struct Event {
 }
 
 #[allow(unused)]
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Clone, Debug, sqlx::FromRow)]
 pub struct EventVersion {
     pub id: i64,
     pub event_id: i64,
@@ -101,6 +145,39 @@ pub struct EventVersion {
     pub last_retrieved_at: DateTime<Utc>,
     pub sync_status: Option<String>, // For tracking sync/reconciliation status
     pub conflict_with: Option<i64>,  // Reference to conflicting version if any
+}
+
+impl From<crate::events::model::ParsedEvent> for EventVersion {
+    fn from(event: crate::events::model::ParsedEvent) -> Self {
+        let raw_data = event.serialize();
+        Self {
+            id: 0,
+            event_id: 0,
+            version: 0,
+            summary: event.summary,
+            description: event.description,
+            dtstart: event.dtstart.map(|x| x.to_utc()),
+            dtend: event.dtend.map(|x| x.to_utc()),
+            duration: event.duration,
+            rrule: event.rrule,
+            exdate: None,
+            status: event.status,
+            organizer: event.organizer,
+            location: event.location,
+            url: event.url,
+            class: event.class,
+            priority: event.priority.map(|x| x.parse::<i32>().ok()).flatten(),
+            transp: event.transp,
+            sequence: None,
+            raw_data,
+            is_all_day: event._all_day,
+            last_repeat: event._last_repeat.map(|x| x.to_utc()),
+            created_at: Utc::now(),
+            last_retrieved_at: Utc::now(),
+            sync_status: None,
+            conflict_with: None       
+        }
+    }
 }
 
 #[allow(unused)]
