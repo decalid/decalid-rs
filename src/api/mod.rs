@@ -5,7 +5,7 @@
 use crate::caldav;
 use crate::db::Db;
 use axum::{
-    routing::{delete, get, post, put},
+    routing::get,
     Router,
 };
 use std::sync::Arc;

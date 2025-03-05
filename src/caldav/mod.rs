@@ -1,3 +1,4 @@
+pub mod calendardata;
 pub mod propfind;
 pub mod server;
 pub mod client;

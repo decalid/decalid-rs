@@ -1,28 +1,24 @@
 use anyhow::Result;
 use clap::Parser;
-use db::Db;
-use sqlx::sqlite::SqlitePool;
+use sqlx::SqlitePool;
+use tokio::task_local;
 
-mod api;
-mod auth;
-mod cache;
-mod caldav;
-mod chrono_utils;
+use decalid::db::Db;
+use decalid::config::Config;
+use decalid::ics;
+use decalid::telemetry;
+
+// The commands module is specific to the binary and not part of the library
 mod commands;
-mod config;
-mod db;
-mod events;
-mod ics;
-mod telemetry;
-mod timezone;
-mod transformation;
 
 use commands::{
-    caldav::{add_caldav_source, sync_caldav_calendar}, calendars::{attach_calendar_to_share, create_calendar, create_share_root, list_calendars, show_calendar}, timezones::{import_timezone, list_timezones, set_calendar_timezone, show_timezone}, users::{create_user, list_users}, Cli, Commands
+    caldav::{add_caldav_source, sync_caldav_calendar},
+    calendars::{attach_calendar_to_share, create_calendar, create_share_root, list_calendars, show_calendar},
+    jwt::{login_new_device, logout_device},
+    timezones::{import_timezone, list_timezones, set_calendar_timezone, show_timezone},
+    users::{create_user, list_users},
+    Cli, Commands
 };
-use config::Config;
-use ics::import_ics;
-use tokio::task_local;
 
 task_local! {
     static LOCAL_DB: Db;
@@ -32,7 +28,7 @@ task_local! {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     
-    // Load configuration
+    // Load the configuration
     let config = if let Ok(config) = Config::from_file("config.json") {
         config
     } else {
@@ -48,7 +44,7 @@ async fn main() -> Result<()> {
 
     match &cli.command {
         Commands::ImportICS { file, calendar_id } => {
-            import_ics(&db, *calendar_id, file).await?;
+            ics::import_ics(&db, *calendar_id, file).await?;
         }
         Commands::CreateUser { username } => {
             create_user(&db, username).await?;
@@ -98,19 +94,22 @@ async fn main() -> Result<()> {
         Commands::ImportTimezone { file } => {
             import_timezone(&db, file).await?;
         }
+        Commands::LoginNewDevice { user_id, device_description, override_expiration } => {
+            login_new_device(&config, &db, *user_id, device_description, *override_expiration).await?;
+        }
+        Commands::LogoutDevice { user_id, device_id } => {
+            logout_device(&db, *user_id, device_id).await?;
+        }
         Commands::Server { port } => {
-            // Use the port from the command line if provided, otherwise use the one from the config
-            let port = port.unwrap_or(config.server.port);
-
-            let config = config.with_port(port);
-            
-            // Start the unified API server which includes both REST and CalDAV endpoints
-            api::start_server(&config, db).await?;
-            
-            // Return without closing the database since the server will handle that
-            return Ok(());
+            let server_port = port.unwrap_or(config.server.port);
+            let config = Config {
+                server: decalid::config::ServerConfig { port: server_port, ..config.server },
+                ..config
+            };
+            println!("Starting server on port {}", server_port);
+            decalid::api::start_server(&config, db).await?;
+            return Ok(())
         }
     }
-
     Ok(db.close().await)
 }

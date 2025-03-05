@@ -87,7 +87,7 @@ pub struct AuthConfig {
     pub webauthn: WebauthnConfig,
 }
 impl AuthConfig {
-    pub(crate) fn with_expiration(&self, expiration: u64) -> AuthConfig {
+    pub fn with_expiration(&self, expiration: u64) -> AuthConfig {
         Self {
             jwt_expiration_seconds: expiration,
             ..self.clone()

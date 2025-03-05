@@ -1,9 +1,10 @@
 use anyhow::Result;
-use log::{error, info};
+use log::{debug, info};
 
-use crate::{
+use decalid::{
     caldav::client::{CalDavAuth, CalDavClient, CalDavConfig},
     db::Db,
+    events::model::ParsedEvent,
 };
 
 /// Add a CalDAV source to a calendar
@@ -45,7 +46,7 @@ pub async fn add_caldav_source(
     // Test the connection
     info!("Testing connection to CalDAV server at {}", url);
     if !client.test_connection().await? {
-        error!("Failed to connect to CalDAV server");
+        debug!("Failed to connect to CalDAV server");
         return Err(anyhow::anyhow!("Failed to connect to CalDAV server"));
     }
     
@@ -54,7 +55,7 @@ pub async fn add_caldav_source(
     let calendars = client.discover_calendars().await?;
     
     if calendars.is_empty() {
-        error!("No calendars found on CalDAV server");
+        debug!("No calendars found on CalDAV server");
         return Err(anyhow::anyhow!("No calendars found on CalDAV server"));
     }
     
@@ -87,12 +88,12 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
     let source = db.admin().get_calendar_source_by_calendar_id(calendar_id).await?;
     
     let Some(source) = source else {
-        error!("No CalDAV source found for calendar {}", calendar_id);
+        debug!("No CalDAV source found for calendar {}", calendar_id);
         return Err(anyhow::anyhow!("No CalDAV source found for this calendar"));
     };
     
     let Some(url) = &source.caldav_url else {
-        error!("CalDAV source has no URL for calendar {}", calendar_id);
+        debug!("CalDAV source has no URL for calendar {}", calendar_id);
         return Err(anyhow::anyhow!("CalDAV source has no URL"));
     };
     
@@ -110,7 +111,7 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
     // Test the connection
     info!("Testing connection to CalDAV server at {}", url);
     if !client.test_connection().await? {
-        error!("Failed to connect to CalDAV server");
+        debug!("Failed to connect to CalDAV server");
         return Err(anyhow::anyhow!("Failed to connect to CalDAV server"));
     }
     
@@ -130,7 +131,7 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
             let cal = cal_result?;
             for event in cal.events {
                 // Create a new event
-                let parsed_event = crate::events::model::ParsedEvent::new(event)?;
+                let parsed_event = ParsedEvent::new(event)?;
                 
                 // Check if this event already exists by UID
                 if let Some(uid) = &parsed_event.uid {

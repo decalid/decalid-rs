@@ -107,6 +107,23 @@ pub(crate) enum Commands {
         #[arg(short, long)]
         tzid: String,
     },
+    LoginNewDevice {
+        #[arg(short, long)]
+        user_id: i64,
+        
+        #[arg(short, long)]
+        device_description: String,
+
+        #[arg(short, long)]
+        override_expiration: Option<u64>,
+    },
+    LogoutDevice {
+        #[arg(short, long)]
+        user_id: i64,
+        
+        #[arg(short, long)]
+        device_id: String,
+    },
     Server {
         #[arg(short, long)]
         port: Option<u16>,

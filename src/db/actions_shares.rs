@@ -1,5 +1,5 @@
 use super::{
-    models::{Calendar, EventVersion},
+    models::{Calendar, SharedVirtualCalendar, CalendarShareRoot, EventVersion},
     Db,
 };
 
@@ -109,5 +109,23 @@ impl<'a> SharesDb<'a> {
         );
 
         Ok(events)
+    }
+    
+    pub(crate) async fn get_share(&self) -> Result<CalendarShareRoot, sqlx::Error> {
+        let share = sqlx::query_as::<_, CalendarShareRoot>("SELECT * FROM share_roots WHERE id = ?")
+            .bind(&self.share_id)
+            .fetch_one(&self.db.0)
+            .await?;
+
+        Ok(share)
+    }
+    pub(crate) async fn get_shared_calendar(&self, calendar_id: &str) -> Result<SharedVirtualCalendar, sqlx::Error> {
+        let share = sqlx::query_as::<_, SharedVirtualCalendar>("SELECT * FROM share_virtualcalendars WHERE id = ? AND root_id = ?")
+            .bind(calendar_id)
+            .bind(&self.share_id)
+            .fetch_one(&self.db.0)
+            .await?;
+
+        Ok(share)
     }
 }

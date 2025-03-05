@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Months, Utc};
 
-use crate::{db::Db, events::model::DecalidEvent};
+use decalid::{db::Db, events::model::DecalidEvent};
 
 pub async fn list_calendars(db: &Db, user_id: i64) -> Result<()> {
     let calendars = db.list_calendars(user_id).await?;

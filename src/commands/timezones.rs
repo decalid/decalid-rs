@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use crate::db::Db;
-use crate::timezone::ParsedTimezone;
+use decalid::db::Db;
+use decalid::timezone::ParsedTimezone;
 
 /// List all timezones in the database
 pub async fn list_timezones(db: &Db) -> Result<()> {

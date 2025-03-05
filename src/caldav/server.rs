@@ -19,7 +19,10 @@ mod preconditions;
 pub type Result<T, E = DecalidHttpError> = core::result::Result<T, E>;
 
 fn push_webdav_options_headers(headers: &mut axum::http::HeaderMap) {
-    headers.insert("DAV", HeaderValue::from_static("1, 2"));
+    headers.insert(
+        "DAV",
+        HeaderValue::from_static("1, 2, access-control, calendar-access"),
+    );
     headers.insert(
         "Allow",
         HeaderValue::from_static(
@@ -202,7 +205,11 @@ async fn webdav_propfind(
                                 |prop| &prop.supported_calendar_component_set,
                                 || allowed_calendar_components.clone().into(),
                             ),
-                            calendar_timezone: if payload.prop.iter().any(|p| !p.calendar_timezone.is_empty()) {
+                            calendar_timezone: if payload
+                                .prop
+                                .iter()
+                                .any(|p| !p.calendar_timezone.is_empty())
+                            {
                                 calendar.timezone.clone()
                             } else {
                                 "".to_string()
@@ -227,12 +234,15 @@ async fn webdav_propfind(
         })
         .collect();
 
-    let propfind_response = propfind::Multistatus { sync_token: None, responses };
+    let propfind_response = propfind::Multistatus {
+        sync_token: None,
+        responses,
+    };
 
     let mut xml_config = yaserde::ser::Config::default();
     xml_config.perform_indent = true;
-    let properties_xml =
-        yaserde::ser::to_string_with_config(&propfind_response, &xml_config).expect("Failed to serialize to XML");
+    let properties_xml = yaserde::ser::to_string_with_config(&propfind_response, &xml_config)
+        .expect("Failed to serialize to XML");
     Ok(webdav_response_builder()
         .status(207) // Multi-Status
         .header("Content-Type", "application/xml")
@@ -283,7 +293,7 @@ async fn webdav_fallback(
 
 pub struct DecalidHttpError(pub Response<Body>);
 impl DecalidHttpError {
-    fn from_str(arg: &str) -> DecalidHttpError {
+    pub fn from_str(arg: &str) -> DecalidHttpError {
         DecalidHttpError(
             Response::builder()
                 .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
@@ -358,7 +368,8 @@ async fn webdav_calendar_get(
         .expect("Failed to fetch calendar events");
 
     // Convert the calendar data to an iCalendar format
-    let icalendar_data = convert_to_icalendar(&app_state.db, &calendar_data, &calendar_events).await;
+    let icalendar_data =
+        convert_to_icalendar(&app_state.db, &calendar_data, &calendar_events).await;
 
     // Return the iCalendar data as the response
     Ok(webdav_response_builder()
@@ -401,15 +412,46 @@ async fn webdav_calendar_fallback(
     }
 }
 
-#[derive(Clone)]
-struct AppState {
-    db: Arc<Db>
+async fn webdav_webcal_ics_get(
+    State(app): State<AppState>,
+    Path((share_id, calendar_id)): Path<(String, String)>,
+) -> Result<Response<Body>> {
+    preconditions::share_calendar_exists(&app.db, &share_id, &calendar_id).await?;
+
+    let share = app.db.shares(&share_id).get_share().await?;
+    let calendar_data = app.db.shares(&share_id).get_calendar(&calendar_id).await?;
+    let last_12months = Utc::now().checked_sub_months(chrono::Months::new(12)).unwrap();
+    let next_12months = last_12months.checked_add_months(chrono::Months::new(12)).unwrap();
+    let calendar_events = app.db.shares(&share_id).get_calendar_events(&calendar_id, last_12months, next_12months).await?;
+
+    let events_filters = app.db.get_filters(&share_id, &calendar_id).await?;
+
+    // Filter events by any filter that we must use according to the share
+    let mut filtered_calendar_events = calendar_events;
+    for filter in events_filters {
+        filtered_calendar_events = filter.apply(&filtered_calendar_events).await?;
+    }
+
+    let icalendar_data = convert_to_icalendar(&app.db, &calendar_data, &filtered_calendar_events).await;
+
+    Ok(webdav_response_builder()
+        .status(200)
+        .header("Content-Type", "text/calendar; charset=utf-8")
+        .body(Body::from(icalendar_data))?)
 }
 
+#[derive(Clone)]
+struct AppState {
+    db: Arc<Db>,
+}
 
 /// Register CalDAV routes on the provided router
 pub fn register_routes(db: Arc<Db>) -> Router {
     Router::new()
+        .route(
+            "/share/{share_id}/{calendar_id}.ics",
+            axum::routing::get(webdav_webcal_ics_get),
+        )
         .route(
             "/share/{share_id}",
             axum::routing::options(webdav_options).fallback(webdav_fallback),
@@ -420,5 +462,6 @@ pub fn register_routes(db: Arc<Db>) -> Router {
                 .put(webdav_calendar_put)
                 .delete(webdav_calendar_delete)
                 .fallback(webdav_calendar_fallback),
-        ).with_state(AppState { db })
+        )
+        .with_state(AppState { db })
 }

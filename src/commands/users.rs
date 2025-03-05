@@ -1,7 +1,6 @@
 use anyhow::Result;
 
-use crate::db::Db;
-
+use decalid::db::Db;
 
 pub async fn create_user(db: &Db, username: &str) -> Result<()> {
     let user = db.admin().create_user(username).await?;

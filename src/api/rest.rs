@@ -2,18 +2,15 @@
 //!
 //! This module contains the REST API endpoints for the application.
 
-use std::sync::Arc;
+use std::{convert::Infallible, sync::Arc};
 
 use axum::{
-    error_handling::HandleErrorLayer,
-    extract::{Path, State},
-    response::IntoResponse,
-    routing, Json, Router,
+    body::Body, error_handling::HandleErrorLayer, extract::{Path, State}, http::StatusCode, response::{IntoResponse, Response}, routing, Json, Router
 };
 use serde::{Deserialize, Serialize};
 use tower::ServiceBuilder;
 
-use crate::{auth::jwt::middleware, caldav::server::DecalidHttpError, config::Config, db::Db};
+use crate::{auth::jwt::middleware::{self, JWTErrors}, caldav::server::DecalidHttpError, config::Config, db::Db};
 
 /// API state containing the database connection
 #[derive(Clone)]
@@ -204,23 +201,32 @@ mod login {
     }
 }
 pub(super) fn init_rest_router(config: &Config, db: Arc<Db>) -> Router {
+    let layer = ServiceBuilder::new()
+        .layer(HandleErrorLayer::new(
+            |error: JWTErrors<_>| async move { match error {
+                JWTErrors::NoToken => DecalidHttpError::from_str("No token provided").with_status(StatusCode::UNAUTHORIZED),
+                JWTErrors::InvalidToken => DecalidHttpError::from_str("Invalid token provided").with_status(StatusCode::FORBIDDEN),
+                JWTErrors::InternalError(e) => DecalidHttpError::from(e),
+            } },
+        ))
+        .layer(middleware::JWTMiddlewareLayer::new(
+            config.auth.clone(),
+            db.clone(),
+        ));
     Router::new()
         // REST endpoints
         .route("/api/shares", routing::get(list_shares))
         .route("/api/shares", routing::post(create_share))
-        .route("/api/shares/:id", routing::get(get_share))
-        .route("/api/shares/:id", routing::put(update_share))
-        .route("/api/shares/:id", routing::delete(delete_share))
+        .route("/api/shares/{id}", routing::get(get_share))
+        .route("/api/shares/{id}", routing::put(update_share))
+        .route("/api/shares/{id}", routing::delete(delete_share))
         .route("/api/calendars", routing::get(list_calendars))
         .route("/api/calendars", routing::post(create_calendar))
-        .route("/api/calendars/:id", routing::get(get_calendar))
-        .route("/api/calendars/:id", routing::put(update_calendar))
-        .route("/api/calendars/:id", routing::delete(delete_calendar))
+        .route("/api/calendars/{id}", routing::get(get_calendar))
+        .route("/api/calendars/{id}", routing::put(update_calendar))
+        .route("/api/calendars/{id}", routing::delete(delete_calendar))
         .route("/api/preview", routing::post(preview_filter))
-        .layer(
-            ServiceBuilder::new()
-                .layer(middleware::JWTMiddlewareLayer::new(config.auth.clone(), db.clone())),
-        )
+        .layer(layer)
         .route("/api/signup", routing::post(login::signup))
         .route("/api/login", routing::post(login::login))
         .with_state(AppStateImpl { db })

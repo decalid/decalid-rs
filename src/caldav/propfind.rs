@@ -170,10 +170,10 @@ pub(super) struct PropSupportedCalendarData {
     namespaces = {"d" = "DAV:", "cal" = "urn:ietf:params:xml:ns:caldav"},
 )]
 pub(super) struct PropCalendarData {
-    #[yaserde(attribute = true, rename = "content-type", default = default_calendardata_content_type)]
-    pub content_type: String,
-    #[yaserde(attribute = true, default = default_calendardata_version)]
-    pub version: String,
+    #[yaserde(attribute = true, rename = "content-type")]
+    pub content_type: Option<String>,
+    #[yaserde(attribute = true)]
+    pub version: Option<String>,
 
     #[yaserde(text = true)]
     pub text: Option<String>,
@@ -190,8 +190,8 @@ fn default_calendardata_version() -> String {
 impl Default for PropCalendarData {
     fn default() -> Self {
         PropCalendarData {
-            content_type: "text/calendar".to_string(),
-            version: "2.0".to_string(),
+            content_type: Some("text/calendar".to_string()),
+            version: Some("2.0".to_string()),
             text: None,
         }
     }

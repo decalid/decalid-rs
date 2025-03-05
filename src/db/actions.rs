@@ -4,7 +4,7 @@ use chrono::{DateTime, TimeZone};
 use crate::events::model::DecalidEvent;
 
 use super::{
-    actions_events::EventsDb, actions_shares::SharesDb, actions_timezone::TimezoneDb, actions_users::UsersDb, models::{Calendar, CalendarSource, EventVersion, User}, Db
+    actions_events::EventsDb, actions_shares::SharesDb, actions_timezone::TimezoneDb, actions_users::UsersDb, models::{Calendar, CalendarSource, EventVersion, Filter, User}, Db
 };
 
 pub struct AdminDb<'a> {
@@ -31,7 +31,7 @@ impl<'a> AdminDb<'a> {
             .await
     }
 
-    pub(crate) async fn get_calendar_source_by_calendar_id(
+    pub async fn get_calendar_source_by_calendar_id(
         &self,
         calendar_id: i64,
     ) -> Result<Option<CalendarSource>, sqlx::Error> {

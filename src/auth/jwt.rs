@@ -44,14 +44,12 @@ pub fn validate_token(config: &AuthConfig, token: &str) -> Result<Claims> {
 }
 
 pub mod middleware {
-    use axum::http::StatusCode;
-    use axum::response::IntoResponse;
     use axum::{extract::Request, response::Response};
     use futures::future::BoxFuture;
-    use std::{convert::Infallible, sync::Arc};
+    use std::sync::Arc;
     use tower::{Layer, Service};
 
-    use crate::{caldav::server::DecalidHttpError, config::AuthConfig, db::Db};
+    use crate::{config::AuthConfig, db::Db};
 
     use super::validate_token;
 
@@ -86,6 +84,13 @@ pub mod middleware {
         pub(crate) db: Arc<Db>,
     }
 
+    #[derive(Debug)]
+    pub enum JWTErrors<E> {
+        NoToken,
+        InvalidToken,
+        InternalError(E),
+    }
+
     impl<S> Service<Request> for JWTMiddlewareService<S>
     where
         S: Service<Request, Response = Response> + Send + 'static,
@@ -93,7 +98,7 @@ pub mod middleware {
     {
         type Response = S::Response;
 
-        type Error = Infallible;
+        type Error = JWTErrors<S::Error>;
 
         type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -121,7 +126,7 @@ pub mod middleware {
             let token = if token.starts_with("Bearer ") {
                 &token["Bearer ".len()..]
             } else {
-                token.as_str()
+                return Box::pin(async move { Err(JWTErrors::NoToken) });
             };
 
             // Now we validate the token as a JWT
@@ -134,29 +139,13 @@ pub mod middleware {
                     let device_fut = users_db.get_user_device(&device_id);
                     let device = device_fut.await;
                     if device.is_ok() {
-                        if let Ok(response) = future.await {
-                            Ok(response)
-                        } else {
-                            Ok(
-                                DecalidHttpError::from(anyhow::anyhow!(
-                                    "Error generating response"
-                                ))
-                                .with_status(StatusCode::INTERNAL_SERVER_ERROR)
-                                .into_response(),
-                            )
-                        }
+                        future.await.map_err(|e| JWTErrors::InternalError(e))
                     } else {
-                        Ok(
-                            DecalidHttpError::from(anyhow::anyhow!("Invalid token"))
-                                .with_status(StatusCode::FORBIDDEN)
-                                .into_response(),
-                        )
+                        Err(JWTErrors::InvalidToken)
                     }
                 })
             } else {
-                Box::pin(async move {
-                    Ok(DecalidHttpError::from(anyhow::anyhow!("Invalid token")).with_status(StatusCode::UNAUTHORIZED).into_response())
-                })
+                Box::pin(async move { Err(JWTErrors::InvalidToken) })
             }
         }
     }
@@ -166,7 +155,6 @@ pub mod middleware {
 mod tests {
     use super::*;
     use crate::{auth::jwt::middleware::JWTMiddlewareService, db::Db};
-    use axum::response::IntoResponse;
     use axum::{
         body::Body,
         http::{Request, StatusCode},
@@ -275,25 +263,13 @@ mod tests {
             .unwrap();
 
         let result = service.clone().oneshot(request).await;
-        let response = result.into_response();
-        assert!(
-            response.status().is_client_error(),
-            "Response status: {:?}, body =     {:?}",
-            response.status(),
-            response.body()
-        );
+        assert!(result.is_err(), "Result should fail with invalid token");
 
         // Test missing token
         let request = Request::builder().body(Body::empty()).unwrap();
 
         let result = service.oneshot(request).await;
-        let response = result.into_response();
-        assert!(
-            response.status().is_client_error(),
-            "Response status: {:?}, body = {:?}",
-            response.status(),
-            response.body()
-        );
+        assert!(result.is_err(), "Result should fail with missing token");
 
         Ok(())
     }
