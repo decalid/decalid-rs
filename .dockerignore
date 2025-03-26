@@ -1,0 +1,34 @@
+# Git files
+.git
+.github
+.gitignore
+
+# Editor files
+.vscode
+.DS_Store
+.cursorrules
+.windsurfrules
+
+# Build artifacts
+target
+
+# Local database files
+db.sqlite*
+
+# Test files
+tests
+tests.sh
+
+# Documentation
+docs
+LICENSE
+README.md
+
+# Development configuration
+bacon.toml
+
+# Temporary files
+_
+
+# Environment variables
+.env

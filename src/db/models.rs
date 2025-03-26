@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use crate::transformation;
 
@@ -12,7 +13,7 @@ pub struct User {
 }
 
 #[allow(unused)]
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Clone, Debug, sqlx::FromRow)]
 pub struct UserDevice {
     pub device_id: String,
     pub user_id: i64,
@@ -24,14 +25,18 @@ pub struct UserDevice {
 
 
 #[allow(unused)]
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug, Deserialize, Serialize, sqlx::FromRow)]
 pub struct Calendar {
     pub id: i64,
     pub user_id: i64,
     pub name: String,
     pub color: Option<String>,
+
     pub timezone_id: Option<i64>, // Reference to VTIMEZONE
+    
+    #[sqlx(default)]
     pub etag: Option<String>,
+    #[sqlx(default)]
     pub timezone: String,
 
     // For the JOIN with share_collections
@@ -41,19 +46,73 @@ pub struct Calendar {
     pub share_description: Option<String>,
     
     pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
 
 #[allow(unused)]
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug, Deserialize, Serialize, sqlx::FromRow)]
 pub struct CalendarSource {
     pub id: i64,
     pub calendar_id: i64,
     pub caldav_url: Option<String>,
-    pub sync_token: Option<String>,
+    pub sync_info: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+
+impl CalendarSource {
+    pub fn parse(&self) -> Result<ParsedCalendarSource, anyhow::Error> {
+        // sync_info is a JSON string
+        let sync_info: SyncInfo = self.sync_info.as_ref().map(|info| serde_json::from_str(info)).transpose()?.unwrap_or_default();
+
+        Ok(ParsedCalendarSource {
+            id: self.id,
+            calendar_id: self.calendar_id,
+            caldav_url: self.caldav_url.clone(),
+            sync_info,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
+    pub fn parsed(self) -> Result<ParsedCalendarSource, anyhow::Error> {
+        // sync_info is a JSON string
+        let sync_info: SyncInfo = self.sync_info.as_ref().map(|info| serde_json::from_str(info)).transpose()?.unwrap_or_default();
+
+        Ok(ParsedCalendarSource {
+            id: self.id,
+            calendar_id: self.calendar_id,
+            caldav_url: self.caldav_url,
+            sync_info,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct ParsedCalendarSource {
+    pub id: i64,
+    pub calendar_id: i64,
+    pub caldav_url: Option<String>,
+    pub sync_info: SyncInfo,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default, PartialEq)]
+pub enum SyncInfo {
+    #[default]
+    None,
+    ICalSyncInfo{
+        last_successful_sync: Option<DateTime<Utc>>,
+        last_etag: Option<String>,
+        last_modfified: Option<DateTime<Utc>>,
+    },
+    CalDavSyncInfo{
+        last_successful_sync: Option<DateTime<Utc>>,
+        sync_token: Option<String>,
+    },
+}
+
 
 #[allow(unused)]
 #[derive(Debug, sqlx::FromRow)]

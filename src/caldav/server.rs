@@ -317,7 +317,7 @@ impl<T: Into<anyhow::Error>> From<T> for DecalidHttpError {
     fn from(error: T) -> Self {
         let anyerror: anyhow::Error = error.into();
         let error_message = if log::max_level() >= log::Level::Debug {
-            format!("Internal Server Error: {}", anyerror)
+            format!("Internal Server Error: {} (at {})", anyerror, anyerror.backtrace())
         } else {
             "Internal Server Error".to_string()
         };
@@ -339,7 +339,7 @@ impl IntoResponse for DecalidHttpError {
 
 // Now calendar-specific methods go here
 
-async fn webdav_calendar_get(
+async fn webdav_calendar_ics_get(
     Path((share_id, calendar_id)): Path<(String, String)>,
     State(app_state): State<AppState>,
 ) -> Result<Response<Body>> {
@@ -357,19 +357,21 @@ async fn webdav_calendar_get(
     let calendar_events = app_state
         .db
         .shares(&share_id)
-        .get_calendar_events(
-            &calendar_id,
-            DateTime::<Utc>::from_timestamp_nanos(0),
-            DateTime::<Utc>::default()
-                .checked_add_months(chrono::Months::new(12 * 500))
-                .unwrap(),
-        )
+        .get_calendar_events(&calendar_id, None, None)
         .await
         .expect("Failed to fetch calendar events");
 
+        let events_filters = app_state.db.get_filters(&share_id, &calendar_id).await?;
+
+        // Filter events by any filter that we must use according to the share
+        let mut filtered_calendar_events = calendar_events;
+        for filter in events_filters {
+            filtered_calendar_events = filter.apply(&filtered_calendar_events).await?;
+        }
+    
     // Convert the calendar data to an iCalendar format
     let icalendar_data =
-        convert_to_icalendar(&app_state.db, &calendar_data, &calendar_events).await;
+        convert_to_icalendar(&app_state.db, &calendar_data, &filtered_calendar_events).await;
 
     // Return the iCalendar data as the response
     Ok(webdav_response_builder()
@@ -412,34 +414,6 @@ async fn webdav_calendar_fallback(
     }
 }
 
-async fn webdav_webcal_ics_get(
-    State(app): State<AppState>,
-    Path((share_id, calendar_id)): Path<(String, String)>,
-) -> Result<Response<Body>> {
-    preconditions::share_calendar_exists(&app.db, &share_id, &calendar_id).await?;
-
-    let share = app.db.shares(&share_id).get_share().await?;
-    let calendar_data = app.db.shares(&share_id).get_calendar(&calendar_id).await?;
-    let last_12months = Utc::now().checked_sub_months(chrono::Months::new(12)).unwrap();
-    let next_12months = last_12months.checked_add_months(chrono::Months::new(12)).unwrap();
-    let calendar_events = app.db.shares(&share_id).get_calendar_events(&calendar_id, last_12months, next_12months).await?;
-
-    let events_filters = app.db.get_filters(&share_id, &calendar_id).await?;
-
-    // Filter events by any filter that we must use according to the share
-    let mut filtered_calendar_events = calendar_events;
-    for filter in events_filters {
-        filtered_calendar_events = filter.apply(&filtered_calendar_events).await?;
-    }
-
-    let icalendar_data = convert_to_icalendar(&app.db, &calendar_data, &filtered_calendar_events).await;
-
-    Ok(webdav_response_builder()
-        .status(200)
-        .header("Content-Type", "text/calendar; charset=utf-8")
-        .body(Body::from(icalendar_data))?)
-}
-
 #[derive(Clone)]
 struct AppState {
     db: Arc<Db>,
@@ -449,16 +423,12 @@ struct AppState {
 pub fn register_routes(db: Arc<Db>) -> Router {
     Router::new()
         .route(
-            "/share/{share_id}/{calendar_id}.ics",
-            axum::routing::get(webdav_webcal_ics_get),
-        )
-        .route(
             "/share/{share_id}",
             axum::routing::options(webdav_options).fallback(webdav_fallback),
         )
         .route(
             "/share/{share_id}/{calendar_id}",
-            axum::routing::get(webdav_calendar_get)
+            axum::routing::get(webdav_calendar_ics_get)
                 .put(webdav_calendar_put)
                 .delete(webdav_calendar_delete)
                 .fallback(webdav_calendar_fallback),

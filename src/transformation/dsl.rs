@@ -150,6 +150,7 @@ impl Env {
         self.vars.insert(key, val);
     }
 
+    #[allow(unused)]
     fn internal_set_parse(&mut self, key: &str, val: &str) {
         match parse(val) {
             Ok(expr) => self.set(key.to_string(), expr),
@@ -662,6 +663,8 @@ fn native_eval(_name: &str, elements: Vec<SExpr>, env: &Env) -> Result<SExpr> {
     eval(env, &elements[0])
 }
 
+
+#[cfg(test)]
 fn filter_events(
     events: impl Iterator<Item = EventVersion>,
     filter: &SExpr,

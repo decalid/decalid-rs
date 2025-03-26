@@ -1,0 +1,16 @@
+[server]
+max_connections = 20
+max_content_length = 100000000
+timeout = 30
+
+[auth]
+type = htpasswd
+htpasswd_filename = /etc/radicale/users
+htpasswd_encryption = bcrypt
+
+[rights]
+type = owner_only
+
+[storage]
+type = multifilesystem
+filesystem_folder = /data

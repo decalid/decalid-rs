@@ -1,0 +1,16 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//decalid-rs//CalDAV Client//EN
+BEGIN:VEVENT
+UID:recurring-event@decalid-rs.test
+DTSTART:20250321T140000Z
+DTEND:20250321T150000Z
+DESCRIPTION:This is a recurring test event that happens every Friday for 10
+  weeks
+DTSTAMP:20250318T215800Z
+LOCATION:Recurring Test Location
+RRULE:FREQ=WEEKLY;BYDAY=FR;COUNT=10
+STATUS:CONFIRMED
+SUMMARY:Recurring Test Event
+END:VEVENT
+END:VCALENDAR

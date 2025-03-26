@@ -4,3 +4,10 @@ env.RUST_BACKTRACE = "1"
 command = ["cargo", "run", "--", "server"]
 background = false
 on_change_strategy = "kill_then_restart"
+
+[jobs.run-server-integration-test]
+env.RUST_LOG = "debug"
+env.RUST_BACKTRACE = "1"
+command = ["cargo", "run", "--", "server", "--port", "8085"]
+background = false
+on_change_strategy = "kill_then_restart"

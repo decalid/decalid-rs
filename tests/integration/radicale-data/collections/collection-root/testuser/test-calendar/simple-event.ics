@@ -1,0 +1,14 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//decalid-rs//CalDAV Client//EN
+BEGIN:VEVENT
+UID:simple-event@decalid-rs.test
+DTSTART:20250320T100000Z
+DTEND:20250320T110000Z
+DESCRIPTION:This event has been modified by the integration test
+DTSTAMP:20250318T215800Z
+LOCATION:Modified Test Location
+STATUS:CONFIRMED
+SUMMARY:Modified Test Event
+END:VEVENT
+END:VCALENDAR

@@ -1,10 +1,13 @@
+use std::str::FromStr as _;
+
 use anyhow::Result;
 use clap::Parser;
+use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::SqlitePool;
 use tokio::task_local;
 
-use decalid::db::Db;
 use decalid::config::Config;
+use decalid::db::Db;
 use decalid::ics;
 use decalid::telemetry;
 
@@ -13,11 +16,13 @@ mod commands;
 
 use commands::{
     caldav::{add_caldav_source, sync_caldav_calendar},
-    calendars::{attach_calendar_to_share, create_calendar, create_share_root, list_calendars, show_calendar},
+    calendars::{
+        attach_calendar_to_share, create_calendar, create_share_root, list_calendars, show_calendar,
+    },
     jwt::{login_new_device, logout_device},
     timezones::{import_timezone, list_timezones, set_calendar_timezone, show_timezone},
     users::{create_user, list_users},
-    Cli, Commands
+    Cli, Commands,
 };
 
 task_local! {
@@ -27,19 +32,31 @@ task_local! {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    
+
     // Load the configuration
-    let config = if let Ok(config) = Config::from_file("config.json") {
-        config
-    } else {
-        Config::from_env()
+    let config = match Config::from_file("config.json") {
+        Ok(config) => {
+            println!("Loaded configuration from file");
+            config
+        }
+        Err(e) => {
+            println!("Failed to load configuration from file, using environment variables: {}", e);
+            Config::from_env()
+        }
     };
-    
+
     // Initialize telemetry
     telemetry::init(&config.telemetry.log_level);
-    
+
     // Connect to database
-    let pool = SqlitePool::connect(&config.database_url).await?;
+    let connection_options = SqliteConnectOptions::from_str(&config.database_url)?
+        .create_if_missing(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+    let pool = SqlitePool::connect_with(connection_options).await?;
+
+    // Migrate database
+    sqlx::migrate!().run(&pool).await?;
+
     let mut db = Db::new(pool);
 
     match &cli.command {
@@ -70,14 +87,35 @@ async fn main() -> Result<()> {
         } => {
             show_calendar(&db, *calendar_id, *min_date, *max_date, *max_results).await?;
         }
-        Commands::CreateShareRoot { share_name, owner_id } => {
+        Commands::CreateShareRoot {
+            share_name,
+            owner_id,
+        } => {
             create_share_root(&db, share_name, *owner_id).await?;
         }
-        Commands::AddCalendarToShare { share_root, calendar_id, description } => {
+        Commands::AddCalendarToShare {
+            share_root,
+            calendar_id,
+            description,
+        } => {
             attach_calendar_to_share(&db, share_root, *calendar_id, description).await?;
         }
-        Commands::AddCalDavSource { calendar_id, url, username, password, token } => {
-            add_caldav_source(&mut db, *calendar_id, url, username.as_deref(), password.as_deref(), token.as_deref()).await?;
+        Commands::AddCalDavSource {
+            calendar_id,
+            url,
+            username,
+            password,
+            token,
+        } => {
+            add_caldav_source(
+                &mut db,
+                *calendar_id,
+                url,
+                username.as_deref(),
+                password.as_deref(),
+                token.as_deref(),
+            )
+            .await?;
         }
         Commands::SyncCalDavCalendar { calendar_id } => {
             sync_caldav_calendar(&mut db, *calendar_id).await?;
@@ -94,8 +132,19 @@ async fn main() -> Result<()> {
         Commands::ImportTimezone { file } => {
             import_timezone(&db, file).await?;
         }
-        Commands::LoginNewDevice { user_id, device_description, override_expiration } => {
-            login_new_device(&config, &db, *user_id, device_description, *override_expiration).await?;
+        Commands::LoginNewDevice {
+            user_id,
+            device_description,
+            override_expiration,
+        } => {
+            login_new_device(
+                &config,
+                &db,
+                *user_id,
+                device_description,
+                *override_expiration,
+            )
+            .await?;
         }
         Commands::LogoutDevice { user_id, device_id } => {
             logout_device(&db, *user_id, device_id).await?;
@@ -103,12 +152,15 @@ async fn main() -> Result<()> {
         Commands::Server { port } => {
             let server_port = port.unwrap_or(config.server.port);
             let config = Config {
-                server: decalid::config::ServerConfig { port: server_port, ..config.server },
+                server: decalid::config::ServerConfig {
+                    port: server_port,
+                    ..config.server
+                },
                 ..config
             };
             println!("Starting server on port {}", server_port);
             decalid::api::start_server(&config, db).await?;
-            return Ok(())
+            return Ok(());
         }
     }
     Ok(db.close().await)

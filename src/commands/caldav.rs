@@ -3,7 +3,7 @@ use log::{debug, info};
 
 use decalid::{
     caldav::client::{CalDavAuth, CalDavClient, CalDavConfig},
-    db::Db,
+    db::{models::SyncInfo, Db},
     events::model::ParsedEvent,
 };
 
@@ -69,12 +69,12 @@ pub async fn add_caldav_source(
         
         // Fetch events for this calendar
         info!("Fetching events from {}", cal_info.url);
-        let events = client.fetch_calendar_events(&cal_info.url).await?;
+        let (events, sync_info) = client.fetch_calendar_events_with_sync(&cal_info.url, SyncInfo::None).await?;
         
         // Save the events to the database
         info!("Saving {} events to calendar {}", events.len(), calendar_id);
         client
-            .save_to_database(db, calendar.user_id, &cal_info, events)
+            .save_to_database(db, calendar.user_id, &cal_info, &sync_info, events)
             .await?;
     }
     
@@ -91,6 +91,7 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
         debug!("No CalDAV source found for calendar {}", calendar_id);
         return Err(anyhow::anyhow!("No CalDAV source found for this calendar"));
     };
+    let source = source.parsed()?;
     
     let Some(url) = &source.caldav_url else {
         debug!("CalDAV source has no URL for calendar {}", calendar_id);
@@ -116,8 +117,8 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
     }
     
     // Use the sync token if available for efficient syncing
-    info!("Fetching events from {} using sync token: {:?}", url, source.sync_token.as_deref());
-    let (events, new_sync_token) = client.fetch_calendar_events_with_sync(url, source.sync_token.as_deref()).await?;
+    info!("Fetching events from {} using sync token: {:?}", url, source.sync_info);
+    let (events, new_sync_info) = client.fetch_calendar_events_with_sync(url, source.sync_info).await?;
     
     // Process each event
     info!("Processing {} events for calendar {}", events.len(), calendar_id);
@@ -157,9 +158,9 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
     }
     
     // Update the sync token in the database
-    if let Some(token) = new_sync_token {
-        info!("Updating sync token to: {}", token);
-        db.create_or_update_calendar_source(calendar_id, url, Some(&token)).await?;
+    if new_sync_info != SyncInfo::None {
+        info!("Updating sync token to: {:?}", new_sync_info);
+        db.create_or_update_calendar_source(calendar_id, url, &new_sync_info).await?;
     }
     
     info!("Successfully synced calendar {} with CalDAV source", calendar_id);

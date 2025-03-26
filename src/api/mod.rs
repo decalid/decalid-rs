@@ -10,9 +10,10 @@ use axum::{
 };
 use std::sync::Arc;
 
-mod well_known;
+mod pagination;
 mod rest;
 mod routes;
+mod well_known;
 
 use crate::config::Config;
 

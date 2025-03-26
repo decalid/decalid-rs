@@ -309,7 +309,7 @@ mod tests {
         let calendar_url = server.url("calendars/user/calendar1/");
         println!("Fetching calendar events from {}", calendar_url);
         let (ics_data, _) = client
-            .fetch_calendar_events_with_sync(&calendar_url, None)
+            .fetch_calendar_events_with_sync(&calendar_url, crate::db::models::SyncInfo::CalDavSyncInfo { last_successful_sync: None, sync_token: None })
             .await
             .unwrap();
         assert!(!ics_data.is_empty());

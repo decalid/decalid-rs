@@ -10,6 +10,7 @@ CREATE TABLE calendars (
     user_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     color TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 );
 
@@ -17,7 +18,7 @@ CREATE TABLE calendar_sources (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     calendar_id INTEGER NOT NULL,
     caldav_url TEXT,
-    sync_token TEXT,
+    sync_info TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (calendar_id) REFERENCES calendars (id) ON DELETE CASCADE

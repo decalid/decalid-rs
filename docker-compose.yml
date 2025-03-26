@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  decalid:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - decalid-data:/app/data
+    environment:
+      - DATABASE_URL=sqlite:///app/data/db.sqlite
+      # Override the default JWT secret with a secure value in production
+      - AUTH__JWT_SECRET=change_me_in_production
+    restart: unless-stopped
+    command: server
+
+volumes:
+  decalid-data:
+    # Using a named volume for persistent data storage

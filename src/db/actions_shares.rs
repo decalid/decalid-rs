@@ -1,5 +1,5 @@
 use super::{
-    models::{Calendar, SharedVirtualCalendar, CalendarShareRoot, EventVersion},
+    models::{Calendar, CalendarShareRoot, EventVersion, SharedVirtualCalendar},
     Db,
 };
 
@@ -85,46 +85,66 @@ impl<'a> SharesDb<'a> {
     pub async fn get_calendar_events(
         &self,
         calendar_id: &str,
-        min_utc: chrono::DateTime<chrono::Utc>,
-        max_utc: chrono::DateTime<chrono::Utc>,
+        min_utc: Option<chrono::DateTime<chrono::Utc>>,
+        max_utc: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Vec<EventVersion>, sqlx::Error> {
-        let events = sqlx::query_as::<_, EventVersion>(
-            "SELECT ev.* FROM events e \
+        let mut sql = "SELECT ev.* FROM events e \
              INNER JOIN event_versions ev ON e.current_version_id = ev.id \
              INNER JOIN share_collections sc ON sc.calendar_id = e.calendar_id \
-             WHERE sc.id = ? AND sc.root_id = ? AND ev.dtstart >= ? AND ev.dtend <= ?",
-        )
-        .bind(calendar_id)
-        .bind(&self.share_id)
-        .bind(min_utc)
-        .bind(max_utc)
-        .fetch_all(&self.db.0)
-        .await?;
+             WHERE sc.id = ? AND sc.root_id = ?"
+            .to_string();
+
+        if let Some(min_utc) = min_utc {
+            sql.push_str(" AND ev.dtstart >= ?");
+        }
+        if let Some(max_utc) = max_utc {
+            sql.push_str(" AND ev.dtend <= ?");
+        }
+
+        let events = {
+            let mut query = sqlx::query_as::<_, EventVersion>(&sql)
+            .bind(calendar_id)
+            .bind(&self.share_id);
+            if let Some(min_utc) = min_utc {
+                query = query.bind(min_utc);
+            }
+            if let Some(max_utc) = max_utc {
+                query = query.bind(max_utc);
+            }
+            query.fetch_all(&self.db.0)
+            .await?
+        };
 
         println!(
             "Asked for events from {} to {} and got {}",
-            min_utc,
-            max_utc,
+            min_utc.map_or("min".to_string(), |dt| dt.to_string()),
+            max_utc.map_or("min".to_string(), |dt| dt.to_string()),
             events.len()
         );
 
         Ok(events)
     }
-    
+
     pub(crate) async fn get_share(&self) -> Result<CalendarShareRoot, sqlx::Error> {
-        let share = sqlx::query_as::<_, CalendarShareRoot>("SELECT * FROM share_roots WHERE id = ?")
-            .bind(&self.share_id)
-            .fetch_one(&self.db.0)
-            .await?;
+        let share =
+            sqlx::query_as::<_, CalendarShareRoot>("SELECT * FROM share_roots WHERE id = ?")
+                .bind(&self.share_id)
+                .fetch_one(&self.db.0)
+                .await?;
 
         Ok(share)
     }
-    pub(crate) async fn get_shared_calendar(&self, calendar_id: &str) -> Result<SharedVirtualCalendar, sqlx::Error> {
-        let share = sqlx::query_as::<_, SharedVirtualCalendar>("SELECT * FROM share_virtualcalendars WHERE id = ? AND root_id = ?")
-            .bind(calendar_id)
-            .bind(&self.share_id)
-            .fetch_one(&self.db.0)
-            .await?;
+    pub(crate) async fn get_shared_calendar(
+        &self,
+        calendar_id: &str,
+    ) -> Result<SharedVirtualCalendar, sqlx::Error> {
+        let share = sqlx::query_as::<_, SharedVirtualCalendar>(
+            "SELECT * FROM share_virtualcalendars WHERE id = ? AND root_id = ?",
+        )
+        .bind(calendar_id)
+        .bind(&self.share_id)
+        .fetch_one(&self.db.0)
+        .await?;
 
         Ok(share)
     }

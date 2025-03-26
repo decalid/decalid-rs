@@ -21,8 +21,6 @@ CREATE TABLE timezone_rules (
 
 -- Add timezone_id to calendars
 ALTER TABLE calendars ADD COLUMN timezone_id INTEGER;
-ALTER TABLE calendars ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-ALTER TABLE calendars ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
 CREATE INDEX idx_calendars_timezone_id ON calendars (timezone_id);
 
 -- Add reconciliation fields to event_versions

@@ -1,0 +1,39 @@
+services:
+  radicale:
+    image: tomsquest/docker-radicale:latest
+    container_name: radicale-test
+    ports:
+      - "5232:5232"
+    environment:
+      - RADICALE_AUTH_TYPE=htpasswd
+      - RADICALE_HTPASSWD_FILENAME=/etc/radicale/users
+      - RADICALE_HTPASSWD_ENCRYPTION=bcrypt
+    volumes:
+      - ./radicale-data:/data
+      - ./radicale-config:/etc/radicale
+    restart: "no"
+    networks:
+      - caldav-network
+
+  decalid:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: decalid-test
+    ports:
+      - "8085:8085"
+    environment:
+      - DATABASE_URL=sqlite:///app/data/db.sqlite
+      - RUST_LOG=debug
+    volumes:
+      - ./decalid-config.json:/app/config.json
+      - ./decalid-data:/app/data
+    depends_on:
+      - radicale
+    restart: "no"
+    networks:
+      - caldav-network
+
+networks:
+  caldav-network:
+    driver: bridge

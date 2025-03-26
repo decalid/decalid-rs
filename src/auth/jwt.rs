@@ -44,12 +44,22 @@ pub fn validate_token(config: &AuthConfig, token: &str) -> Result<Claims> {
 }
 
 pub mod middleware {
-    use axum::{extract::Request, response::Response};
+    use axum::{
+        extract::Request,
+        http::{Extensions, StatusCode},
+        response::{IntoResponse, Response},
+    };
     use futures::future::BoxFuture;
-    use std::sync::Arc;
+    use futures::TryFutureExt;
+    use pin_project::pin_project;
+    use std::{future::Future, sync::Arc, task::Poll};
     use tower::{Layer, Service};
 
-    use crate::{config::AuthConfig, db::Db};
+    use crate::{
+        caldav::server::DecalidHttpError,
+        config::AuthConfig,
+        db::{models::UserDevice, Db},
+    };
 
     use super::validate_token;
 
@@ -88,15 +98,125 @@ pub mod middleware {
     pub enum JWTErrors<E> {
         NoToken,
         InvalidToken,
+        InvalidTokenFormat,
+        UnknownInternalError,
         InternalError(E),
+    }
+    impl<E> JWTErrors<E> {
+        fn transmute<X>(&self) -> JWTErrors<X> {
+            match self {
+                JWTErrors::InternalError(_) => JWTErrors::UnknownInternalError,
+                JWTErrors::UnknownInternalError => JWTErrors::UnknownInternalError,
+                JWTErrors::NoToken => JWTErrors::NoToken,
+                JWTErrors::InvalidToken => JWTErrors::InvalidToken,
+                JWTErrors::InvalidTokenFormat => JWTErrors::InvalidTokenFormat,
+            }
+        }
+    }
+
+    impl<E: std::error::Error + Send + Sync + 'static> IntoResponse for JWTErrors<E> {
+        fn into_response(self) -> Response {
+            match self {
+                JWTErrors::NoToken => DecalidHttpError::from_str("No token provided")
+                    .with_status(StatusCode::UNAUTHORIZED),
+                JWTErrors::InvalidToken => DecalidHttpError::from_str("Invalid token provided")
+                    .with_status(StatusCode::FORBIDDEN),
+                JWTErrors::InvalidTokenFormat => DecalidHttpError::from_str("Invalid token format")
+                    .with_status(StatusCode::BAD_REQUEST),
+                JWTErrors::InternalError(e) => DecalidHttpError::from(e),
+                JWTErrors::UnknownInternalError => {
+                    DecalidHttpError::from_str("Unknown internal error")
+                }
+            }
+            .into_response()
+        }
+    }
+
+    impl<E: Sync + Send + std::fmt::Display> std::fmt::Display for JWTErrors<E> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                JWTErrors::NoToken => write!(f, "No token provided"),
+                JWTErrors::InvalidToken => write!(f, "Invalid token"),
+                JWTErrors::InvalidTokenFormat => write!(f, "Invalid token format"),
+                JWTErrors::InternalError(e) => write!(f, "Internal error: {}", e),
+                JWTErrors::UnknownInternalError => write!(f, "Unknown internal error"),
+            }
+        }
+    }
+
+    impl std::error::Error for JWTErrors<anyhow::Error> {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            match self {
+                JWTErrors::InternalError(e) => e.source(),
+                _ => None,
+            }
+        }
+    }
+
+    #[pin_project]
+    struct JWTMiddlewareFuture<C, F> {
+        #[pin]
+        check_future: Option<C>,
+        #[pin]
+        guarded_future: Option<F>,
+        #[pin]
+        early_failure: Option<JWTErrors<()>>,
+        extensions: &'static mut Extensions,
+    }
+
+    impl<'pin, C, F, Response, Error> Future for JWTMiddlewareFuture<C, F>
+    where
+        F: Future<Output = Result<Response, Error>>,
+        C: Future<Output = anyhow::Result<UserDevice>>,
+    {
+        type Output = Result<Response, JWTErrors<Error>>;
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            if let Some(err) = &self.early_failure {
+                return Poll::Ready(Err(err.transmute()));
+            }
+            let this = self.project();
+            let guarded_future = this.guarded_future.as_pin_mut().unwrap();
+            let check_future = this.check_future.as_pin_mut().unwrap();
+
+            match check_future.poll(cx) {
+                std::task::Poll::Ready(Ok(user_device)) => {
+                    this.extensions.insert(user_device);
+                    match guarded_future.poll(cx) {
+                        std::task::Poll::Pending => std::task::Poll::Pending,
+                        std::task::Poll::Ready(e) => {
+                            std::task::Poll::Ready(e.map_err(|e| JWTErrors::InternalError(e)))
+                        }
+                    }
+                }
+                std::task::Poll::Ready(Err(_)) => {
+                    std::task::Poll::Ready(Err(JWTErrors::UnknownInternalError))
+                }
+                std::task::Poll::Pending => std::task::Poll::Pending,
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct JWTMiddlewareResponse<R>(Result<R, JWTErrors<()>>);
+
+    impl<R: IntoResponse> IntoResponse for JWTMiddlewareResponse<R> {
+        fn into_response(self) -> Response {
+            match self.0 {
+                Ok(r) => r.into_response(),
+                Err(e) => e.transmute::<hyper::Error>().into_response(),
+            }
+        }
     }
 
     impl<S> Service<Request> for JWTMiddlewareService<S>
     where
-        S: Service<Request, Response = Response> + Send + 'static,
+        S: Service<Request, Response = Response> + Clone + Send + 'static,
         S::Future: Send + 'static,
     {
-        type Response = S::Response;
+        type Response = JWTMiddlewareResponse<S::Response>;
 
         type Error = JWTErrors<S::Error>;
 
@@ -108,12 +228,14 @@ pub mod middleware {
         ) -> std::task::Poll<Result<(), Self::Error>> {
             match self.inner.poll_ready(cx) {
                 std::task::Poll::Ready(Ok(())) => std::task::Poll::Ready(Ok(())),
-                std::task::Poll::Ready(Err(_)) => std::task::Poll::Ready(Ok(())),
+                std::task::Poll::Ready(Err(e)) => {
+                    std::task::Poll::Ready(Err(JWTErrors::InternalError(e)))
+                }
                 std::task::Poll::Pending => std::task::Poll::Pending,
             }
         }
 
-        fn call(&mut self, req: Request) -> Self::Future {
+        fn call(&mut self, mut req: Request) -> Self::Future {
             let config = self.config.clone();
             let token = req
                 .headers()
@@ -121,31 +243,44 @@ pub mod middleware {
                 .map(|value| value.to_str().unwrap_or_default())
                 .unwrap_or_default()
                 .to_string();
-            let future = self.inner.call(req);
 
             let token = if token.starts_with("Bearer ") {
-                &token["Bearer ".len()..]
+                token["Bearer ".len()..].to_string()
             } else {
-                return Box::pin(async move { Err(JWTErrors::NoToken) });
+                println!("No token provided");
+                return Box::pin(async move { Ok(JWTMiddlewareResponse(Err(JWTErrors::NoToken))) });
             };
 
             // Now we validate the token as a JWT
             if let Ok(claims) = validate_token(&config, &token) {
+                println!("Token is valid");
                 let device_id = claims.sub;
                 let db = self.db.clone();
-
+                let mut inner: S = self.inner.clone();
+                
                 Box::pin(async move {
                     let users_db = db.users();
-                    let device_fut = users_db.get_user_device(&device_id);
-                    let device = device_fut.await;
-                    if device.is_ok() {
-                        future.await.map_err(|e| JWTErrors::InternalError(e))
+                    let device = users_db
+                        .get_user_device(&device_id)
+                        .map_err(|_e| JWTErrors::InternalError(()))
+                        .await;
+
+                    if let Ok(device) = device {
+                        req.extensions_mut().insert(device);
                     } else {
-                        Err(JWTErrors::InvalidToken)
+                        // Device no longer exists!
+                        return Ok(JWTMiddlewareResponse(Err(JWTErrors::InvalidToken)));
+                    }
+
+                    let future = inner.call(req);
+
+                    match future.await {
+                        Ok(result) => Ok(JWTMiddlewareResponse(Ok(result))),
+                        Err(e) => Err(JWTErrors::InternalError(e)),
                     }
                 })
             } else {
-                Box::pin(async move { Err(JWTErrors::InvalidToken) })
+                Box::pin(async move { Ok(JWTMiddlewareResponse(Err(JWTErrors::InvalidToken))) })
             }
         }
     }
@@ -158,7 +293,7 @@ mod tests {
     use axum::{
         body::Body,
         http::{Request, StatusCode},
-        response::Response,
+        response::{IntoResponse, Response},
     };
     use std::sync::Arc;
     use tower::{Service, ServiceBuilder, ServiceExt};
@@ -253,7 +388,8 @@ mod tests {
             .clone()
             .oneshot(request)
             .await
-            .expect("Service should succeed with valid token");
+            .expect("Service should succeed with valid token")
+            .into_response();
         assert_eq!(response.status(), StatusCode::OK);
 
         // Test invalid token
@@ -263,13 +399,13 @@ mod tests {
             .unwrap();
 
         let result = service.clone().oneshot(request).await;
-        assert!(result.is_err(), "Result should fail with invalid token");
+        assert!(result.is_ok_and(|r| r.into_response().status().is_client_error()), "Result should return client error with invalid token");
 
         // Test missing token
         let request = Request::builder().body(Body::empty()).unwrap();
 
         let result = service.oneshot(request).await;
-        assert!(result.is_err(), "Result should fail with missing token");
+        assert!(result.is_ok_and(|r| r.into_response().status().is_client_error()), "Result should return client error with missing token");
 
         Ok(())
     }

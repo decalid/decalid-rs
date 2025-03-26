@@ -4,7 +4,12 @@ use chrono::{DateTime, TimeZone};
 use crate::events::model::DecalidEvent;
 
 use super::{
-    actions_events::EventsDb, actions_shares::SharesDb, actions_timezone::TimezoneDb, actions_users::UsersDb, models::{Calendar, CalendarSource, EventVersion, Filter, User}, Db
+    actions_events::EventsDb,
+    actions_shares::SharesDb,
+    actions_timezone::TimezoneDb,
+    actions_users::UsersDb,
+    models::{Calendar, CalendarSource, EventVersion, Filter, SyncInfo, User},
+    Db,
 };
 
 pub struct AdminDb<'a> {
@@ -75,7 +80,38 @@ impl Db {
             .fetch_all(&self.0)
             .await
     }
+    pub async fn list_calendar_sources(self: &Self, calendar_id: i64) -> Result<Vec<CalendarSource>, sqlx::Error> {
+        sqlx::query_as::<_, CalendarSource>("SELECT * FROM calendar_sources WHERE calendar_id = ?")
+            .bind(calendar_id)
+            .fetch_all(&self.0)
+            .await
+    }
 
+    pub async fn create_calendar_source(
+        self: &Self,
+        calendar_id: i64,
+        caldav_url: &str,
+    ) -> Result<CalendarSource, sqlx::Error> {
+        sqlx::query_as::<_, CalendarSource>(
+            "INSERT INTO calendar_sources (calendar_id, caldav_url) VALUES (?, ?) RETURNING *",
+        )
+        .bind(calendar_id)
+        .bind(caldav_url)
+        .fetch_one(&self.0)
+        .await
+    }
+
+    pub async fn delete_calendar_source(self: &Self, calendar_id: i64, source_id: i64) -> Result<(), sqlx::Error> { 
+        sqlx::query("DELETE FROM calendar_sources WHERE calendar_id = ? AND id = ?")
+            .bind(calendar_id)
+            .bind(source_id)
+            .execute(&self.0)
+            .await?;
+        Ok(())
+    }
+
+    /// Gets the current version of events between some dates.
+    /// It does not return already-removed events
     pub async fn create_calendar(
         self: &Self,
         user_id: i64,
@@ -123,18 +159,19 @@ impl Db {
         &self,
         calendar_id: i64,
         caldav_url: &str,
-        sync_token: Option<&str>,
-    ) -> Result<CalendarSource, sqlx::Error> {
-        sqlx::query_as::<_, CalendarSource>(
-            "INSERT INTO calendar_sources (calendar_id, caldav_url, sync_token) VALUES (?, ?, ?) 
-             ON CONFLICT (calendar_id) DO UPDATE SET caldav_url = excluded.caldav_url, sync_token = excluded.sync_token, updated_at = CURRENT_TIMESTAMP
+        sync_info: &SyncInfo,
+    ) -> Result<CalendarSource> {
+        let sync_info_json = serde_json::to_string(sync_info)?;
+        Ok(sqlx::query_as::<_, CalendarSource>(
+            "INSERT INTO calendar_sources (calendar_id, caldav_url, sync_info) VALUES (?, ?, ?) 
+             ON CONFLICT (calendar_id) DO UPDATE SET caldav_url = excluded.caldav_url, sync_info = excluded.sync_info, updated_at = CURRENT_TIMESTAMP
                      RETURNING *"
                 )
                 .bind(calendar_id)
                 .bind(caldav_url)
-                .bind(sync_token)
+                .bind(sync_info_json)
                 .fetch_one(&self.0)
-                .await
+                .await?)
     }
 
     pub async fn get_filters(&self, share_id: &str, calendar_id: &str) -> Result<Vec<Filter>> {
@@ -148,13 +185,12 @@ impl Db {
                JOIN share_virtualcalendars sv ON svf.virtualcalendar_id = sv.id
                JOIN share_roots sr ON sv.root_id = sr.id
                WHERE sv.id = ? AND sr.id = ?
-               ORDER BY f.created_at DESC"#
+               ORDER BY f.created_at DESC"#,
         )
         .bind(calendar_id)
         .bind(share_id)
         .fetch_all(&self.0)
-        .await?
-        ;
+        .await?;
 
         Ok(filters)
     }
