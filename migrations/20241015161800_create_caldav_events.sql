@@ -62,7 +62,8 @@ CREATE TABLE event_versions (
     last_repeat TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_retrieved_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (event_id) REFERENCES events (id) ON DELETE CASCADE
+    FOREIGN KEY (event_id) REFERENCES events (id) ON DELETE CASCADE,
+    UNIQUE (event_id, version)
 );
 
 -- Create event_uids table

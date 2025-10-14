@@ -44,22 +44,18 @@ pub fn validate_token(config: &AuthConfig, token: &str) -> Result<Claims> {
 }
 
 pub mod middleware {
+    use std::sync::Arc;
+
     use axum::{
         extract::Request,
-        http::{Extensions, StatusCode},
+        http::StatusCode,
         response::{IntoResponse, Response},
     };
     use futures::future::BoxFuture;
     use futures::TryFutureExt;
-    use pin_project::pin_project;
-    use std::{future::Future, sync::Arc, task::Poll};
     use tower::{Layer, Service};
 
-    use crate::{
-        caldav::server::DecalidHttpError,
-        config::AuthConfig,
-        db::{models::UserDevice, Db},
-    };
+    use crate::{caldav::server::DecalidHttpError, config::AuthConfig, db::Db};
 
     use super::validate_token;
 
@@ -153,52 +149,6 @@ pub mod middleware {
         }
     }
 
-    #[pin_project]
-    struct JWTMiddlewareFuture<C, F> {
-        #[pin]
-        check_future: Option<C>,
-        #[pin]
-        guarded_future: Option<F>,
-        #[pin]
-        early_failure: Option<JWTErrors<()>>,
-        extensions: &'static mut Extensions,
-    }
-
-    impl<'pin, C, F, Response, Error> Future for JWTMiddlewareFuture<C, F>
-    where
-        F: Future<Output = Result<Response, Error>>,
-        C: Future<Output = anyhow::Result<UserDevice>>,
-    {
-        type Output = Result<Response, JWTErrors<Error>>;
-        fn poll(
-            self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Self::Output> {
-            if let Some(err) = &self.early_failure {
-                return Poll::Ready(Err(err.transmute()));
-            }
-            let this = self.project();
-            let guarded_future = this.guarded_future.as_pin_mut().unwrap();
-            let check_future = this.check_future.as_pin_mut().unwrap();
-
-            match check_future.poll(cx) {
-                std::task::Poll::Ready(Ok(user_device)) => {
-                    this.extensions.insert(user_device);
-                    match guarded_future.poll(cx) {
-                        std::task::Poll::Pending => std::task::Poll::Pending,
-                        std::task::Poll::Ready(e) => {
-                            std::task::Poll::Ready(e.map_err(|e| JWTErrors::InternalError(e)))
-                        }
-                    }
-                }
-                std::task::Poll::Ready(Err(_)) => {
-                    std::task::Poll::Ready(Err(JWTErrors::UnknownInternalError))
-                }
-                std::task::Poll::Pending => std::task::Poll::Pending,
-            }
-        }
-    }
-
     #[derive(Debug)]
     pub struct JWTMiddlewareResponse<R>(Result<R, JWTErrors<()>>);
 
@@ -257,7 +207,7 @@ pub mod middleware {
                 let device_id = claims.sub;
                 let db = self.db.clone();
                 let mut inner: S = self.inner.clone();
-                
+
                 Box::pin(async move {
                     let users_db = db.users();
                     let device = users_db
@@ -399,13 +349,19 @@ mod tests {
             .unwrap();
 
         let result = service.clone().oneshot(request).await;
-        assert!(result.is_ok_and(|r| r.into_response().status().is_client_error()), "Result should return client error with invalid token");
+        assert!(
+            result.is_ok_and(|r| r.into_response().status().is_client_error()),
+            "Result should return client error with invalid token"
+        );
 
         // Test missing token
         let request = Request::builder().body(Body::empty()).unwrap();
 
         let result = service.oneshot(request).await;
-        assert!(result.is_ok_and(|r| r.into_response().status().is_client_error()), "Result should return client error with missing token");
+        assert!(
+            result.is_ok_and(|r| r.into_response().status().is_client_error()),
+            "Result should return client error with missing token"
+        );
 
         Ok(())
     }

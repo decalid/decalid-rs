@@ -1,3 +1,6 @@
 {
-    "sqltools.useNodeRuntime": true
+  "sqltools.useNodeRuntime": true,
+  "rust-analyzer.cargo.extraEnv": {
+    "DATABASE_URL": "sqlite://db.sqlite"
+  }
 }

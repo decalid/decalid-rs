@@ -107,7 +107,7 @@ END:VCALENDAR</C:calendar-data>
             </D:propstat>
         </D:response></D:multistatus>"#,
             ))
-            .unwrap()
+            .unwrap();
     }
 
     return Response::builder()
@@ -207,56 +207,23 @@ mod tests {
 
         for response in &multistatus.responses {
             // Check if this is a calendar resource
-            let is_calendar = if let Some(resource_type) = &response.propstat.prop.resourcetype {
-                resource_type.calendar.is_some()
-            } else {
-                false
-            };
+            let is_calendar =
+                if let Some(resource_type) = &response._get_prop(|p| p.resourcetype.as_ref()) {
+                    resource_type.calendar.is_some()
+                } else {
+                    false
+                };
 
             if is_calendar {
                 // Extract calendar information
                 let url = response.href.clone();
 
-                // Get display name
                 let display_name = response
-                    .propstat
-                    .prop
-                    .displayname
-                    .as_ref()
-                    .and_then(|prop| prop.content.as_ref())
-                    .and_then(|content| content.text.as_ref())
-                    .map(|text| text.clone())
+                    ._get_prop_string(|prop| prop.displayname.as_ref())
                     .unwrap_or_else(|| "Unnamed Calendar".to_string());
-
-                // Get color
-                let color = response
-                    .propstat
-                    .prop
-                    .calendar_color
-                    .as_ref()
-                    .and_then(|prop| prop.content.as_ref())
-                    .and_then(|content| content.text.as_ref())
-                    .map(|text| text.clone());
-
-                // Get description
-                let description = response
-                    .propstat
-                    .prop
-                    .calendar_description
-                    .as_ref()
-                    .and_then(|prop| prop.content.as_ref())
-                    .and_then(|content| content.text.as_ref())
-                    .map(|text| text.clone());
-
-                // Get ctag for change tracking
-                let ctag = response
-                    .propstat
-                    .prop
-                    .getetag
-                    .as_ref()
-                    .and_then(|prop| prop.content.as_ref())
-                    .and_then(|content| content.text.as_ref())
-                    .map(|text| text.clone());
+                let color = response._get_prop_string(|prop| prop.calendar_color.as_ref());
+                let description = response._get_prop_string(|prop| prop.calendar_description.as_ref());
+                let ctag = response._get_prop_string(|prop| prop.getetag.as_ref());
 
                 calendars.push(CalendarInfo {
                     url,
@@ -309,7 +276,13 @@ mod tests {
         let calendar_url = server.url("calendars/user/calendar1/");
         println!("Fetching calendar events from {}", calendar_url);
         let (ics_data, _) = client
-            .fetch_calendar_events_with_sync(&calendar_url, crate::db::models::SyncInfo::CalDavSyncInfo { last_successful_sync: None, sync_token: None })
+            .fetch_calendar_events_with_sync(
+                &calendar_url,
+                crate::db::models::SyncInfo::CalDavSyncInfo {
+                    last_successful_sync: None,
+                    sync_token: None,
+                },
+            )
             .await
             .unwrap();
         assert!(!ics_data.is_empty());

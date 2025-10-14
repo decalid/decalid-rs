@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use decalid::{auth::jwt::generate_token, db::Db, config::Config};
+use decalid::{auth::jwt::{generate_token, validate_token}, config::Config, db::Db};
 
 pub async fn login_new_device(
     config: &Config,
@@ -18,10 +18,11 @@ pub async fn login_new_device(
     let config = config.auth.with_expiration(expiration);
 
     let token = generate_token(&config, &device.device_id)?;
+    let claims = validate_token(&config, &token)?;
 
     println!("Token: {}", token);
     println!("Device ID: {}", device.device_id);
-    println!("Expiration: {}", expiration);
+    println!("Expiration: {}", claims.exp);
 
     Ok(token)
 }

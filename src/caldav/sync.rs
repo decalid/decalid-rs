@@ -4,7 +4,7 @@ use super::propfind::Response;
 pub fn extract_calendar_data(response: &Response) -> Vec<&str> {
     let mut calendar_data = Vec::new();
 
-    if let Some(cal_data) = &response.propstat.prop.calendar_data {
+    if let Some(cal_data) = response._get_prop(|p| p.calendar_data.as_ref()) {
         if let Some(ref text) = cal_data.text {
             calendar_data.push(text.as_str());
         }
@@ -16,9 +16,7 @@ pub fn extract_calendar_data(response: &Response) -> Vec<&str> {
 /// Extracts etag from a response
 pub fn extract_etag(response: &Response) -> Option<&str> {
     response
-        .propstat
-        .prop
-        .getetag
+        ._get_prop(|p| p.getetag.as_ref())
         .iter()
         .flat_map(|etag| &etag.content)
         .flat_map(|t| &t.text)

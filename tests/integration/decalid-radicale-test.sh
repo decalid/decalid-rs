@@ -23,11 +23,21 @@ CALENDAR_NAME="test-calendar"
 USER_PRINCIPAL="/test-user/"
 CALENDAR_HOME="/test-user/"
 CALENDAR_PATH="/test-user/$CALENDAR_NAME/"
-DECALID_CALENDAR_PATH="/decalid/$CALENDAR_NAME/"
+DECALID_CALENDAR_ID=
+DECALID_CALENDAR_SHARE_NAME=
+DECALID_CALENDAR_PATH=
 
 DECALID_TOKEN=""
 DECALID_DEVICE_ID=""
 DECALID_EXPIRATION=""
+
+date () {
+    if which gdate > /dev/null; then
+        gdate "$@"
+    else
+        env date "$@"
+    fi
+}
 
 # Function to run curl with basic auth against Radicale
 curl_radicale() {
@@ -36,6 +46,7 @@ curl_radicale() {
 
 # Function to run curl with basic auth against decalid
 curl_decalid() {
+    echo curl --fail-with-body -s -H "Authorization: Bearer $DECALID_TOKEN" "$@" >&2
     curl --fail-with-body -s -H "Authorization: Bearer $DECALID_TOKEN" "$@"
 }
 
@@ -234,16 +245,16 @@ check_decalid_configured () {
     # Check that a calendar exists and it has a source
     # Use jq to count that there is a single element in the .data field
     response=$(curl_decalid -X GET "$DECALID_HOST/api/calendars/")
-    echo "Got response: $response"
     if [[ $(echo "$response" | jq -r '.data | length') -eq 0 ]]; then
         echo "Not configured yet"
         return 1
     fi
     check_result "decalid calendar exists"
-    local calendar_id=$(echo "$response" | jq -r '.data[0].id')
-    response=$(curl_decalid -X GET "$DECALID_HOST/api/calendars/$calendar_id/sources/")
-    echo "Response: $response"
+    DECALID_CALENDAR_ID=$(echo "$response" | jq -r '.data[0].id')
+    response=$(curl_decalid -X GET "$DECALID_HOST/api/calendars/$DECALID_CALENDAR_ID/sources")
     if [[ $(echo "$response" | jq -r '.data | length') -eq 0 ]]; then
+        echo "decalid calendar has no sources, deleting calendar"
+        curl_decalid -X DELETE "$DECALID_HOST/api/calendars/$DECALID_CALENDAR_ID"
         return 1
     fi
     check_result "decalid calendar has a source"
@@ -257,21 +268,20 @@ configure_decalid() {
     fi
 
     local response
-    local calendar_id
     echo -e "\n${YELLOW}Configuring decalid to use Radicale as a source...${NC}"
 
     # Create a calendar for the user
-    response=$(curl_decalid -v -X POST -H "Content-Type: application/json" \
+    response=$(curl_decalid -X POST -H "Content-Type: application/json" \
         -d '{"name":"'$CALENDAR_NAME'"}' \
         "$DECALID_HOST/api/calendars/")
     check_result "decalid calendar created" "$response"
-    calendar_id=$(echo "$response" | grep -E '"id":"(\\w+)' | sed 's/"id":"//')
-    echo "Calendar ID: $calendar_id"
+    DECALID_CALENDAR_ID=$(echo "$response" | jq -r .id)
+    echo "Calendar ID: $DECALID_CALENDAR_ID"
     
     # Add Radicale source
     curl_decalid -X POST -H "Content-Type: application/json" \
-        -d '{"type":"caldav","url":"'$RADICALE_HOST'", "username":"'$USERNAME'", "password":"'$PASSWORD'", "calendar_path":"'$CALENDAR_PATH'"}' \
-        "$DECALID_HOST/api/calendars/$calendar_id/sources/add" > /dev/null
+        -d '{"type":"caldav","url":"'$RADICALE_HOST$CALENDAR_PATH'", "username":"'$USERNAME'", "password":"'$PASSWORD'"}' \
+        "$DECALID_HOST/api/calendars/$DECALID_CALENDAR_ID/sources"
     
     check_result "decalid configured to use Radicale"
 }
@@ -281,18 +291,14 @@ test_decalid_read() {
     echo -e "\n${YELLOW}Testing decalid's ability to read from Radicale...${NC}"
     
     # Query events from decalid
-    # This is a placeholder and should be replaced with actual API calls
-    # to your decalid server once the API is implemented
-    
-    # Example:
-    # QUERY_RESULT=$(curl_decalid -X GET "$DECALID_HOST/api/calendars/$CALENDAR_NAME/events")
-    # echo "$QUERY_RESULT" | grep -q "simple-event@decalid-rs.test" && \
-    # echo "$QUERY_RESULT" | grep -q "recurring-event@decalid-rs.test" && \
-    # echo "$QUERY_RESULT" | grep -q "allday-event@decalid-rs.test"
-    
-    echo -e "${YELLOW}Note: decalid read test is a placeholder. Implement actual API calls when available.${NC}"
-    # For now, we'll assume it works correctly
-    check_result "decalid can read events from Radicale (placeholder)"
+    QUERY_RESULT=$(curl_decalid -X GET "$DECALID_HOST/api/calendars/$DECALID_CALENDAR_ID/events")
+    check_result "read events from decalid API" "$QUERY_RESULT"
+    echo "QUERY: $QUERY_RESULT"
+    echo "$QUERY_RESULT" | grep -q "simple-event@decalid-rs.test" && \
+    echo "$QUERY_RESULT" | grep -q "recurring-event@decalid-rs.test" && \
+    echo "$QUERY_RESULT" | grep -q "allday-event@decalid-rs.test"
+
+    check_result "decalid read events from Radicale"
 }
 
 # Test decalid's ability to write to Radicale

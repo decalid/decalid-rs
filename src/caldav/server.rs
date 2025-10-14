@@ -6,7 +6,6 @@ use axum::{
     routing::Router,
     RequestExt,
 };
-use chrono::{DateTime, Utc};
 use extractors::XmlExtract;
 use std::sync::Arc;
 
@@ -93,8 +92,8 @@ async fn webdav_propfind(
                             "calendar should retrieve share_id from shares_db::get_calendars()"
                         )
                     ),
-                    propstat: propfind::Propstat {
-                        prop: propfind::Prop {
+                    propstat: vec![propfind::Propstat {
+                        prop: vec![propfind::Prop {
                             displayname: Some(propfind::PropDisplayName {
                                 content: Some(calendar.name.into()),
                             }),
@@ -119,9 +118,9 @@ async fn webdav_propfind(
                             calendar_timezone: "".to_string(),
                             supported_calendar_data: None,
                             calendar_data: None,
-                        },
+                        }],
                         status: "HTTP/1.1 200 OK".to_string(),
-                    },
+                    }],
                 }
             } else if payload.propname.is_some() {
                 propfind::Response {
@@ -133,10 +132,10 @@ async fn webdav_propfind(
                             "calendar should retrieve share_id from shares_db::get_calendars()"
                         )
                     ),
-                    propstat: propfind::Propstat {
-                        prop: propfind::Prop::propnames(),
+                    propstat: vec![propfind::Propstat {
+                        prop: vec![propfind::Prop::propnames()],
                         status: "HTTP/1.1 200 OK".to_string(),
-                    },
+                    }],
                 }
             } else {
                 fn when_in_payload<'a, P: 'a, T>(
@@ -160,8 +159,8 @@ async fn webdav_propfind(
                             "calendar should retrieve share_id from shares_db::get_calendars()"
                         )
                     ),
-                    propstat: propfind::Propstat {
-                        prop: propfind::Prop {
+                    propstat: vec![propfind::Propstat {
+                        prop: vec![propfind::Prop {
                             displayname: when_in_payload(
                                 &payload,
                                 |prop| &prop.displayname,
@@ -226,9 +225,9 @@ async fn webdav_propfind(
                                 |prop| &prop.calendar_data,
                                 || propfind::PropCalendarData::default(),
                             ),
-                        },
+                        }],
                         status: "HTTP/1.1 200 OK".to_string(),
-                    },
+                    }],
                 }
             }
         })
@@ -317,7 +316,11 @@ impl<T: Into<anyhow::Error>> From<T> for DecalidHttpError {
     fn from(error: T) -> Self {
         let anyerror: anyhow::Error = error.into();
         let error_message = if log::max_level() >= log::Level::Debug {
-            format!("Internal Server Error: {} (at {})", anyerror, anyerror.backtrace())
+            format!(
+                "Internal Server Error: {} (at {})",
+                anyerror,
+                anyerror.backtrace()
+            )
         } else {
             "Internal Server Error".to_string()
         };
@@ -361,14 +364,14 @@ async fn webdav_calendar_ics_get(
         .await
         .expect("Failed to fetch calendar events");
 
-        let events_filters = app_state.db.get_filters(&share_id, &calendar_id).await?;
+    let events_filters = app_state.db.get_filters(&share_id, &calendar_id).await?;
 
-        // Filter events by any filter that we must use according to the share
-        let mut filtered_calendar_events = calendar_events;
-        for filter in events_filters {
-            filtered_calendar_events = filter.apply(&filtered_calendar_events).await?;
-        }
-    
+    // Filter events by any filter that we must use according to the share
+    let mut filtered_calendar_events = calendar_events;
+    for filter in events_filters {
+        filtered_calendar_events = filter.apply(&filtered_calendar_events).await?;
+    }
+
     // Convert the calendar data to an iCalendar format
     let icalendar_data =
         convert_to_icalendar(&app_state.db, &calendar_data, &filtered_calendar_events).await;

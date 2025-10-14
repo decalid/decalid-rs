@@ -17,11 +17,11 @@ pub async fn import_ics(db: &Db, calendar_id: i64, file_path: &str) -> Result<()
     let ics_content = std::fs::read_to_string(file_path)?;
 
     // Import the ICS content
-    import_ics_data(db, calendar_id, &ics_content).await
+    import_ics_data(db, calendar_id, file_path, &ics_content).await
 }
 
 /// Import ICS data directly from a string
-pub async fn import_ics_data(db: &Db, calendar_id: i64, ics_content: &str) -> Result<()> {
+pub async fn import_ics_data(db: &Db, calendar_id: i64, url: &str, ics_content: &str) -> Result<()> {
     // Check the calendar exists
     let calendar = db.admin().get_calendar_by_id(calendar_id).await?;
 
@@ -55,6 +55,10 @@ pub async fn import_ics_data(db: &Db, calendar_id: i64, ics_content: &str) -> Re
         for event in cal.events {
             // Create a new event
             let event = ParsedEvent::new(event)?;
+            let event = ParsedEvent {
+                url: Some(url.to_string()),
+                ..event
+            };
             let event_version = events_db.create(event).await?;
             println!(
                 "Imported event: {}",
@@ -106,4 +110,37 @@ pub async fn get_timezone_by_tzid(db: &Db, tzid: &str) -> Result<Option<Timezone
 
     // Look up the timezone
     db.timezones().get_by_tzid(&resolved_tzid).await
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Result;
+    use crate::events::model::ParsedEvent;
+
+    #[tokio::test]
+    async fn test_small_ics_parse() -> Result<()> {
+        let mut events = 0;
+        // This text was taken from a manual test with Radicale
+        let text = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//decalid-rs//CalDAV Client//EN\r\nBEGIN:VEVENT\r\nUID:simple-event@decalid-rs.test\r\nDTSTART:20250320T100000Z\r\nDTEND:20250320T110000Z\r\nDESCRIPTION:This is a test event created by the integration test\r\nDTSTAMP:20250318T215800Z\r\nLOCATION:Test Location\r\nSTATUS:CONFIRMED\r\nSUMMARY:Simple Test Event\r\nEND:VEVENT\r\nEND:VCALENDAR";
+
+        let parser = ical::IcalParser::new(text.as_bytes());
+
+        for cal_result in parser {
+            let cal = cal_result?;
+
+            // Now process events
+            for event in cal.events {
+                events += 1;
+                // Create a new event
+                let event = ParsedEvent::new(event)?;
+                let event_version = event;
+                println!(
+                    "Imported event: {}",
+                    event_version.summary.unwrap_or_default()
+                );
+            }
+        }
+        assert!(events == 1);
+        Ok(())
+    }
 }

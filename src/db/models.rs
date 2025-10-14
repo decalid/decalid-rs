@@ -49,7 +49,7 @@ pub struct Calendar {
 }
 
 #[allow(unused)]
-#[derive(Debug, Deserialize, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Deserialize, Serialize, sqlx::FromRow)]
 pub struct CalendarSource {
     pub id: i64,
     pub calendar_id: i64,
@@ -174,11 +174,17 @@ pub struct Event {
     pub current_version_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+
+    #[sqlx(default)]
+    pub last_version: Option<i64>,
 }
 
 #[allow(unused)]
-#[derive(Clone, Debug, sqlx::FromRow)]
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
 pub struct EventVersion {
+    #[sqlx(default)]
+    pub uid: Option<String>,
+
     pub id: i64,
     pub event_id: i64,
     pub version: i32,
@@ -210,6 +216,7 @@ impl From<crate::events::model::ParsedEvent> for EventVersion {
     fn from(event: crate::events::model::ParsedEvent) -> Self {
         let raw_data = event.serialize();
         Self {
+            uid: event.uid,
             id: 0,
             event_id: 0,
             version: 0,

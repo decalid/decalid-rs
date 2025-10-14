@@ -133,7 +133,7 @@ fn ical_datetime_or_date_to_rust_datetime(
             // Parse the datetime string based on whether it contains 'T' (datetime) or not (date)
             let naive_dt = if is_datetime(input_ref) {
                 // Parse as datetime
-                NaiveDateTime::parse_from_str(input_ref, "%Y%m%dT%H%M%S")?
+                NaiveDateTime::parse_from_str(input_ref, "%Y%m%dT%H%M%SZ")?
             } else {
                 // Parse as date with time set to midnight
                 chrono::NaiveDate::parse_from_str(input_ref, "%Y%m%d")?

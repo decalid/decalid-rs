@@ -2,7 +2,7 @@ use anyhow::Result;
 use log::{debug, info};
 
 use decalid::{
-    caldav::client::{CalDavAuth, CalDavClient, CalDavConfig},
+    caldav::client::{CalDavAuth, CalDavClient, CalDavConfig, ClientIcsData},
     db::{models::SyncInfo, Db},
     events::model::ParsedEvent,
 };
@@ -70,11 +70,11 @@ pub async fn add_caldav_source(
         // Fetch events for this calendar
         info!("Fetching events from {}", cal_info.url);
         let (events, sync_info) = client.fetch_calendar_events_with_sync(&cal_info.url, SyncInfo::None).await?;
-        
+
         // Save the events to the database
-        info!("Saving {} events to calendar {}", events.len(), calendar_id);
+        info!("Saving {} events to calendar {}", events.len(), calendar.id);
         client
-            .save_to_database(db, calendar.user_id, &cal_info, &sync_info, events)
+            .save_to_database(db, calendar.id, &cal_info.url, &sync_info, events)
             .await?;
     }
     
@@ -124,7 +124,7 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
     info!("Processing {} events for calendar {}", events.len(), calendar_id);
     let events_db = db.events(calendar_id);
     
-    for ics in &events {
+    for ClientIcsData { ics, url } in events {
         // Parse the ICS data to extract events
         let reader = ical::IcalParser::new(ics.as_bytes());
         
@@ -133,6 +133,10 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
             for event in cal.events {
                 // Create a new event
                 let parsed_event = ParsedEvent::new(event)?;
+                let parsed_event = ParsedEvent {
+                    url: Some(url.clone()),
+                    ..parsed_event
+                };
                 
                 // Check if this event already exists by UID
                 if let Some(uid) = &parsed_event.uid {

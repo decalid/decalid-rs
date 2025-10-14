@@ -1,23 +1,24 @@
-use yaserde::{YaDeserialize, YaSerialize};
+use std::str::FromStr;
 
+use http::StatusCode;
+use yaserde::{YaDeserialize, YaSerialize};
 
 #[derive(YaSerialize, YaDeserialize, Debug, Default)]
 pub(super) struct Empty;
 
+pub(super) trait FieldWithContent: Clone {
+    fn into_content(self) -> Option<Content>;
+}
 
-#[derive(YaSerialize, YaDeserialize, Debug, Default)]
-#[yaserde(
-    flatten = true,
-)]
+#[derive(YaSerialize, YaDeserialize, Debug, Default, Clone)]
+#[yaserde(flatten = true)]
 pub(super) struct Content {
     #[yaserde(text = true)]
     pub text: Option<String>,
 }
 
 #[derive(YaSerialize, YaDeserialize, Debug, Default)]
-#[yaserde(
-    flatten = true,
-)]
+#[yaserde(flatten = true)]
 pub(super) struct ContentCdata {
     #[yaserde(cdata = true)]
     pub text: String,
@@ -61,7 +62,6 @@ pub(super) struct PropName;
     rename = "multistatus"
 )]
 pub(super) struct Multistatus {
-
     // Used for synchronization on <DAV:sync-token> element
     #[yaserde(prefix = "d", rename = "sync-token")]
     pub sync_token: Option<Content>,
@@ -75,11 +75,86 @@ pub(super) struct Multistatus {
     prefix = "d",
     namespaces = {"d" = "DAV:", "cal" = "urn:ietf:params:xml:ns:caldav"}
 )]
-pub(super) struct Response {
+pub struct Response {
     #[yaserde(prefix = "d")]
     pub href: String,
     #[yaserde(prefix = "d")]
-    pub propstat: Propstat,
+    pub(super) propstat: Vec<Propstat>,
+}
+
+pub(super) struct WithStatus<P> {
+    pub prop: P,
+    pub status: StatusCode,
+}
+
+impl Response {
+    pub(super) fn all_props(&self) -> impl Iterator<Item = WithStatus<&Prop>> {
+        self.propstat.iter().flat_map(|propstat| {
+            let status_code = propstat.status.split(' ').skip(1).next().unwrap();
+            let status = StatusCode::from_str(status_code).unwrap();
+            propstat
+                .prop
+                .iter()
+                .map(move |prop| WithStatus { prop, status })
+        })
+    }
+
+    pub(super) fn into_all_props(self) -> impl Iterator<Item = WithStatus<Prop>> {
+        self.propstat.into_iter().flat_map(|propstat| {
+            let status_code = propstat.status.split(' ').skip(1).next().unwrap();
+            let status = StatusCode::from_str(status_code).unwrap();
+            propstat
+                .prop
+                .into_iter()
+                .map(move |prop| WithStatus { prop, status })
+                .into_iter()
+        })
+    }
+
+    pub(super) fn ok_props_iter(&self) -> impl Iterator<Item = WithStatus<&Prop>> {
+        self.all_props().filter_by_status(StatusCode::is_success)
+    }
+
+    pub(super) fn ok_props(&self) -> Vec<&Prop> {
+        self.ok_props_iter().drop_status().collect()
+    }
+
+    pub(super) fn _get_prop<F>(&self, checker: impl Fn(&Prop) -> Option<&F>) -> Option<&F> {
+        self.ok_props_iter()
+            .drop_status()
+            .filter(|prop| checker(prop).is_some())
+            .flat_map(|prop| checker(prop))
+            .next()
+    }
+
+    pub(super) fn _get_prop_string<F: FieldWithContent>(
+        &self,
+        checker: impl Fn(&Prop) -> Option<&F>,
+    ) -> Option<String> {
+        self._get_prop(checker)
+            .and_then(|prop| prop.clone().into_content())
+            .and_then(|content| content.text)
+    }
+}
+
+pub(super) trait OkProps<P> {
+    fn filter_by_status<F: FnMut(&StatusCode) -> bool>(
+        self,
+        filter: F,
+    ) -> impl Iterator<Item = WithStatus<P>>;
+    fn drop_status(self) -> impl Iterator<Item = P>;
+}
+
+impl<P, T: Iterator<Item = WithStatus<P>>> OkProps<P> for T {
+    fn filter_by_status<F: FnMut(&StatusCode) -> bool>(
+        self,
+        mut filter: F,
+    ) -> impl Iterator<Item = WithStatus<P>> {
+        self.filter(move |WithStatus { status, prop: _ }| filter(status))
+    }
+    fn drop_status(self) -> impl Iterator<Item = P> {
+        self.map(|WithStatus { prop, status: _ }| prop)
+    }
 }
 
 #[derive(YaSerialize, YaDeserialize, Debug)]
@@ -89,7 +164,7 @@ pub(super) struct Response {
 )]
 pub(super) struct Propstat {
     #[yaserde(prefix = "d")]
-    pub prop: Prop,
+    pub prop: Vec<Prop>,
     #[yaserde(prefix = "d")]
     pub status: String,
 }
@@ -126,7 +201,8 @@ pub(super) struct Prop {
     pub getetag: Option<PropGetETag>,
     #[yaserde(prefix = "cal", rename = "supported-calendar-component-set")]
     pub supported_calendar_component_set: Option<PropSupportedCalendarComponentSet>,
-    #[yaserde(prefix = "cal", rename = "calendar-timezone", cdata = true, default = default_prop_calendar_timezone)] // Only in collections
+    #[yaserde(prefix = "cal", rename = "calendar-timezone", cdata = true, default = default_prop_calendar_timezone)]
+    // Only in collections
     pub calendar_timezone: String,
     #[yaserde(prefix = "cal", rename = "supported-calendar-data")]
     pub supported_calendar_data: Option<PropSupportedCalendarData>,
@@ -139,7 +215,10 @@ impl Prop {
             displayname: Some(PropDisplayName { content: None }),
             calendar_color: Some(PropCalendarColor { content: None }),
             calendar_description: Some(PropCalendarDescription { content: None }),
-            resourcetype: Some(PropResourceType { calendar: None, collection: None }),
+            resourcetype: Some(PropResourceType {
+                calendar: None,
+                collection: None,
+            }),
             getetag: Some(PropGetETag { content: None }),
             supported_calendar_component_set: None,
             calendar_timezone: "".to_string(), // TODO: Fix
@@ -152,7 +231,6 @@ impl Prop {
 fn default_prop_calendar_timezone() -> String {
     "".to_string()
 }
-
 
 #[derive(YaSerialize, YaDeserialize, Debug)]
 #[yaserde(
@@ -179,14 +257,6 @@ pub(super) struct PropCalendarData {
     pub text: Option<String>,
 }
 
-fn default_calendardata_content_type() -> String {
-    "text/calendar".to_string()
-}
-
-fn default_calendardata_version() -> String {
-    "2.0".to_string()
-}
-
 impl Default for PropCalendarData {
     fn default() -> Self {
         PropCalendarData {
@@ -209,7 +279,7 @@ pub(super) struct PropResourceType {
     pub collection: Option<Empty>,
 }
 
-#[derive(YaSerialize, YaDeserialize, Debug, Default)]
+#[derive(YaSerialize, YaDeserialize, Debug, Default, Clone)]
 #[yaserde(
     prefix = "d",
     namespaces = {"d" = "DAV:", "cal" = "urn:ietf:params:xml:ns:caldav"}
@@ -219,8 +289,13 @@ pub(super) struct PropGetCTag {
     pub content: Option<Content>,
 }
 
+impl FieldWithContent for PropGetCTag {
+    fn into_content(self) -> Option<Content> {
+        self.content
+    }
+}
 
-#[derive(YaSerialize, YaDeserialize, Debug, Default)]
+#[derive(YaSerialize, YaDeserialize, Debug, Default, Clone)]
 #[yaserde(
     prefix = "d",
     namespaces = {"d" = "DAV:", "cal" = "urn:ietf:params:xml:ns:caldav"}
@@ -228,6 +303,12 @@ pub(super) struct PropGetCTag {
 pub(super) struct PropGetETag {
     #[yaserde(prefix = "d")]
     pub content: Option<Content>,
+}
+
+impl FieldWithContent for PropGetETag {
+    fn into_content(self) -> Option<Content> {
+        self.content
+    }
 }
 
 #[derive(YaSerialize, YaDeserialize, Debug, Default)]
@@ -256,8 +337,7 @@ pub(super) struct PropSupportedCalendarComponent {
     pub name: String,
 }
 
-
-#[derive(YaSerialize, YaDeserialize, Debug, Default)]
+#[derive(YaSerialize, YaDeserialize, Debug, Default, Clone)]
 #[yaserde(
     prefix = "d",
     namespaces = {"d" = "DAV:", "cal" = "urn:ietf:params:xml:ns:caldav"}
@@ -267,7 +347,13 @@ pub(super) struct PropDisplayName {
     pub content: Option<Content>,
 }
 
-#[derive(YaSerialize, YaDeserialize, Debug, Default)]
+impl FieldWithContent for PropDisplayName {
+    fn into_content(self) -> Option<Content> {
+        self.content
+    }
+}
+
+#[derive(YaSerialize, YaDeserialize, Debug, Default, Clone)]
 #[yaserde(
     prefix = "d",
     namespaces = {"d" = "DAV:", "cal" = "urn:ietf:params:xml:ns:caldav"}
@@ -277,7 +363,13 @@ pub(super) struct PropCalendarColor {
     pub content: Option<Content>,
 }
 
-#[derive(YaSerialize, YaDeserialize, Debug, Default)]
+impl FieldWithContent for PropCalendarColor {
+    fn into_content(self) -> Option<Content> {
+        self.content
+    }
+}
+
+#[derive(YaSerialize, YaDeserialize, Debug, Default, Clone)]
 #[yaserde(
     prefix = "d",
     namespaces = {"d" = "DAV:", "cal" = "urn:ietf:params:xml:ns:caldav"},
@@ -285,6 +377,12 @@ pub(super) struct PropCalendarColor {
 pub(super) struct PropCalendarDescription {
     #[yaserde(prefix = "d")]
     pub content: Option<Content>,
+}
+
+impl FieldWithContent for PropCalendarDescription {
+    fn into_content(self) -> Option<Content> {
+        self.content
+    }
 }
 
 impl From<String> for Content {
@@ -298,7 +396,6 @@ impl From<String> for ContentCdata {
         ContentCdata { text: s }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

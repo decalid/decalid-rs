@@ -1,13 +1,15 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use http::StatusCode as HttpStatusCode;
 use log::{debug, info, warn};
 use reqwest::{Client, RequestBuilder, StatusCode};
 use std::time::Duration;
 use yaserde::{de::from_str, ser::to_string};
 
+use crate::caldav::propfind::{FieldWithContent, Multistatus, OkProps, WithStatus};
 use crate::db::models::SyncInfo;
+use crate::db::Db;
 use crate::ics;
-use crate::{caldav::propfind::Multistatus, db::Db};
 
 use super::propfind::Propfind;
 
@@ -34,6 +36,13 @@ pub enum CalDavAuth {
     Bearer { token: String },
     /// No authentication
     None,
+}
+
+
+#[derive(Debug)]
+pub struct ClientIcsData {
+    pub url: String,
+    pub ics: String,
 }
 
 /// CalDAV client for interacting with external CalDAV servers
@@ -160,12 +169,20 @@ impl CalDavClient {
             Ok(multistatus) => {
                 for response in &multistatus.responses {
                     // Check if this is a calendar resource
-                    let is_calendar =
-                        if let Some(resource_type) = &response.propstat.prop.resourcetype {
-                            resource_type.calendar.is_some()
-                        } else {
-                            false
-                        };
+                    // Find if in any of the propstats we have a prop for resourcetype calendar
+                    let is_calendar = response
+                        .ok_props_iter()
+                        .filter(|&WithStatus { prop, .. }| {
+                            prop.resourcetype
+                                .as_ref()
+                                .map(|rt| rt.calendar.is_some())
+                                .unwrap_or(false)
+                        })
+                        .drop_status()
+                        .flat_map(|prop| prop.resourcetype.as_ref())
+                        .flat_map(|rt| rt.calendar.as_ref())
+                        .next()
+                        .is_some();
 
                     if is_calendar {
                         // Extract calendar information
@@ -173,44 +190,18 @@ impl CalDavClient {
 
                         // Get display name
                         let display_name = response
-                            .propstat
-                            .prop
-                            .displayname
-                            .as_ref()
-                            .and_then(|prop| prop.content.as_ref())
-                            .and_then(|content| content.text.as_ref())
-                            .map(|text| text.clone())
+                            ._get_prop_string(|prop| prop.displayname.as_ref())
                             .unwrap_or_else(|| "Unnamed Calendar".to_string());
 
                         // Get color
-                        let color = response
-                            .propstat
-                            .prop
-                            .calendar_color
-                            .as_ref()
-                            .and_then(|prop| prop.content.as_ref())
-                            .and_then(|content| content.text.as_ref())
-                            .map(|text| text.clone());
+                        let color = response._get_prop_string(|prop| prop.calendar_color.as_ref());
 
                         // Get description
-                        let description = response
-                            .propstat
-                            .prop
-                            .calendar_description
-                            .as_ref()
-                            .and_then(|prop| prop.content.as_ref())
-                            .and_then(|content| content.text.as_ref())
-                            .map(|text| text.clone());
+                        let description =
+                            response._get_prop_string(|prop| prop.calendar_description.as_ref());
 
                         // Get ctag for change tracking
-                        let ctag = response
-                            .propstat
-                            .prop
-                            .getetag
-                            .as_ref()
-                            .and_then(|prop| prop.content.as_ref())
-                            .and_then(|content| content.text.as_ref())
-                            .map(|text| text.clone());
+                        let ctag = response._get_prop_string(|prop| prop.getetag.as_ref());
 
                         calendars.push(CalendarInfo {
                             url,
@@ -342,19 +333,24 @@ END:VCALENDAR"#
         &self,
         calendar_url: &str,
         sync_info: SyncInfo,
-    ) -> Result<(Vec<String>, SyncInfo)> {
-        let SyncInfo::CalDavSyncInfo {
-            sync_token,
-            ..
-        } = sync_info
-        else {
+    ) -> Result<(Vec<ClientIcsData>, SyncInfo)> {
+        let SyncInfo::CalDavSyncInfo { sync_token, .. } = sync_info else {
             return Err(anyhow::anyhow!("Invalid sync info"));
         };
 
         if let Some(token) = sync_token {
+            log::debug!(
+                "Fetching calendar events from {} with sync token: {}",
+                calendar_url,
+                token
+            );
             self.fetch_calendar_events_caldav_sync_collection(calendar_url, &token)
                 .await
         } else {
+            log::debug!(
+                "Fetching calendar events from {} (first sync)",
+                calendar_url
+            );
             self.fetch_calendar_events_caldav_calendar_query(calendar_url)
                 .await
         }
@@ -364,7 +360,7 @@ END:VCALENDAR"#
         &self,
         calendar_url: &str,
         sync_token: &str,
-    ) -> Result<(Vec<String>, SyncInfo)> {
+    ) -> Result<(Vec<ClientIcsData>, SyncInfo)> {
         let report_body = format!(
             r#"<?xml version="1.0" encoding="utf-8" ?>
             <D:sync-collection xmlns:D="DAV:">
@@ -373,6 +369,7 @@ END:VCALENDAR"#
                 <D:prop>
                     <D:getetag/>
                     <C:calendar-data xmlns:C="urn:ietf:params:xml:ns:caldav"/>
+                    <D:sync-token/>
                 </D:prop>
             </D:sync-collection>"#,
             sync_token
@@ -418,10 +415,20 @@ END:VCALENDAR"#
                 }
 
                 // Extract calendar data from each response
-                for response in &sync_response.responses {
-                    if let Some(ref cal_data) = response.propstat.prop.calendar_data {
-                        if let Some(ref text) = cal_data.text {
-                            calendar_data.push(text.clone());
+                for response in sync_response.responses {
+                    let url = response.href.clone();
+                    for prop in response
+                        .into_all_props()
+                        .filter_by_status(HttpStatusCode::is_success)
+                        .drop_status()
+                    {
+                        if let Some(cal_data) = prop.calendar_data {
+                            if let Some(ics) = cal_data.text {
+                                calendar_data.push(ClientIcsData {
+                                    url: url.clone(),
+                                    ics,
+                                });
+                            }
                         }
                     }
                 }
@@ -447,12 +454,13 @@ END:VCALENDAR"#
     async fn fetch_calendar_events_caldav_calendar_query(
         &self,
         calendar_url: &str,
-    ) -> Result<(Vec<String>, SyncInfo)> {
+    ) -> Result<(Vec<ClientIcsData>, SyncInfo)> {
         let report_body = r#"<?xml version="1.0" encoding="utf-8" ?>
             <C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
                 <D:prop>
-                    <D:getetag/>
-                    <C:calendar-data/>
+                <D:getetag/>
+                <C:calendar-data/>
+                <D:sync-token/>
                 </D:prop>
                 <C:filter>
                     <C:comp-filter name="VCALENDAR"/>
@@ -493,14 +501,28 @@ END:VCALENDAR"#
         // Parse the calendar-query response
         match from_str::<Multistatus>(&body) {
             Ok(query_response) => {
+                log::debug!("[OK] Calendar events response: {:#?}", query_response);
                 // Extract calendar data from each response
-                for response in &query_response.responses {
-                    if let Some(ref cal_data) = response.propstat.prop.calendar_data {
-                        if let Some(ref text) = cal_data.text {
-                            calendar_data.push(text.clone());
+                for response in query_response.responses {
+                    let url = response.href.clone();
+                    for prop in response
+                        .into_all_props()
+                        .filter_by_status(HttpStatusCode::is_success)
+                        .drop_status()
+                    {
+                        if let Some(cal_data) = prop.calendar_data {
+                            if let Some(ics) = cal_data.text {
+                                calendar_data.push(ClientIcsData {
+                                    url: url.clone(),
+                                    ics,
+                                });
+                            }
                         }
                     }
                 }
+
+                log::debug!("Headers: {:#?}", headers);
+                log::debug!("Calendar data: {:#?}", calendar_data);
 
                 // For initial queries, we might get a sync token in a header or property
                 // This is server-dependent, so we'll check common locations
@@ -509,6 +531,7 @@ END:VCALENDAR"#
                         new_sync_token = Some(token.to_string());
                     }
                 }
+                log::debug!("New sync token: {:#?}", new_sync_token);
             }
             Err(e) => {
                 warn!("Failed to parse calendar-query response: {}", e);
@@ -538,7 +561,7 @@ END:VCALENDAR"#
         &self,
         calendar_url: &str,
         sync_info: SyncInfo,
-    ) -> Result<(Vec<String>, SyncInfo)> {
+    ) -> Result<(Vec<ClientIcsData>, SyncInfo)> {
         // Create a GET request to get calendar data
         // If we have a sync_token, we can use it to only fetch changes
         match sync_info {
@@ -566,11 +589,11 @@ END:VCALENDAR"#
                 }
 
                 let headers = response.headers().clone();
-                let body = response
+                let ics = response
                     .text()
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to read response body: {}", e))?;
-                debug!("Calendar events response: {}", body);
+                debug!("Calendar events response: {}", ics);
 
                 let last_modified_header = headers
                     .get("Last-Modified")
@@ -598,7 +621,10 @@ END:VCALENDAR"#
                 }
 
                 Ok((
-                    vec![body],
+                    vec![ClientIcsData {
+                        url: calendar_url.to_string(),
+                        ics,
+                    }],
                     SyncInfo::ICalSyncInfo {
                         last_successful_sync: Some(Utc::now()),
                         last_etag: etag,
@@ -615,14 +641,18 @@ END:VCALENDAR"#
         &self,
         calendar_url: &str,
         sync_info: SyncInfo,
-    ) -> Result<(Vec<String>, SyncInfo)> {
+    ) -> Result<(Vec<ClientIcsData>, SyncInfo)> {
         // Create a REPORT request to get calendar data
         // If we have a sync_token, we can use it to only fetch changes
+        log::debug!(
+            "Fetching calendar events from {} with sync: {:#?}",
+            calendar_url,
+            sync_info
+        );
         match sync_info {
             SyncInfo::None => {
                 let new_sync_info = self.discover_calendar_syncinfo(calendar_url).await?;
-                Box::pin(self.fetch_calendar_events_with_sync(calendar_url, new_sync_info))
-                    .await
+                Box::pin(self.fetch_calendar_events_with_sync(calendar_url, new_sync_info)).await
             }
             SyncInfo::ICalSyncInfo { .. } => {
                 self.fetch_calendar_events_ical(calendar_url, sync_info)
@@ -638,40 +668,48 @@ END:VCALENDAR"#
     /// Save calendar data to the database
     pub async fn save_to_database(
         &self,
-        db: &mut Db,
-        user_id: i64,
-        calendar_info: &CalendarInfo,
+        db: &Db,
+        calendar_id: i64,
+        url: &str,
         sync_info: &SyncInfo,
-        ics_data: Vec<String>,
+        ics_data: Vec<ClientIcsData>,
     ) -> Result<i64> {
-        // Create or update the calendar in the database
-        let calendar = db
-            .create_calendar(
-                user_id,
-                &calendar_info.display_name,
-                calendar_info.color.as_deref(),
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create calendar in database: {}", e))?;
-
         // Create or update the calendar source
-        db.create_or_update_calendar_source(
-            calendar.id,
-            &calendar_info.url,
-            sync_info,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to create/update calendar source: {}", e))?;
+        db.create_or_update_calendar_source(calendar_id, &url, sync_info)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create/update calendar source: {}", e))?;
 
         // Import each ICS file
-        for ics in ics_data {
-            info!("Importing ICS data for calendar {}", calendar.id);
-            ics::import_ics_data(db, calendar.id, &ics)
+        for ClientIcsData { ics, url } in ics_data {
+            info!("Importing ICS data for calendar {}", calendar_id);
+            ics::import_ics_data(db, calendar_id, &url, &ics)
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to import ICS data: {}", e))?;
         }
 
-        Ok(calendar.id)
+        Ok(calendar_id)
+    }
+
+    pub async fn fetch_pull_save(&self, db: &Db, user_id: i64, calendar_id: i64) -> Result<()> {
+        // This check ensures the user/calendar pair is correct, before proceeding
+        db.get_calendar(user_id, calendar_id).await?;
+        let source = db.get_calendar_source(calendar_id).await?;
+        let url = source
+            .caldav_url
+            .ok_or(anyhow::anyhow!("No Calendar source URL provided"))?;
+        let sync_info = source
+            .sync_info
+            .map(|s| serde_json::from_str(&s).ok())
+            .flatten()
+            .unwrap_or_default();
+        let (events, sync_info) = self
+            .fetch_calendar_events_with_sync(&url, sync_info)
+            .await?;
+
+        self.save_to_database(db, calendar_id, &url, &sync_info, events)
+            .await?;
+
+        Ok(())
     }
 }
 
