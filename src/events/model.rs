@@ -132,8 +132,12 @@ fn ical_datetime_or_date_to_rust_datetime(
 
             // Parse the datetime string based on whether it contains 'T' (datetime) or not (date)
             let naive_dt = if is_datetime(input_ref) {
-                // Parse as datetime
-                NaiveDateTime::parse_from_str(input_ref, "%Y%m%dT%H%M%SZ")?
+                // Parse as datetime (UTC values end with 'Z'; local times omit it per RFC 5545 §3.3.5)
+                if input_ref.ends_with('Z') {
+                    NaiveDateTime::parse_from_str(input_ref, "%Y%m%dT%H%M%SZ")?
+                } else {
+                    NaiveDateTime::parse_from_str(input_ref, "%Y%m%dT%H%M%S")?
+                }
             } else {
                 // Parse as date with time set to midnight
                 chrono::NaiveDate::parse_from_str(input_ref, "%Y%m%d")?
@@ -141,7 +145,8 @@ fn ical_datetime_or_date_to_rust_datetime(
                     .ok_or_else(|| anyhow::anyhow!("Invalid time"))?
             };
 
-            // If we have a TZID, use it, otherwise assume UTC
+            // If we have a TZID, use it, otherwise assume UTC.
+            // RFC 5545 §3.2.19 requires DATE-TIME values with TZID parameters to be floating (no trailing 'Z').
             if let Some(tz_name) = tzid {
                 let tz: ChronoTz = tz_name
                     .parse()
@@ -589,6 +594,44 @@ mod tests {
             occurrences[2],
             Utc.with_ymd_and_hms(2024, 1, 4, 10, 0, 0).unwrap()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_dtstart_with_tzid_without_trailing_z() -> Result<()> {
+        let mut event = ical::parser::ical::component::IcalEvent::new();
+        event.properties = vec![
+            ical::property::Property {
+                name: "DTSTAMP".to_string(),
+                params: None,
+                value: Some("20240101T050000Z".to_string()),
+            },
+            ical::property::Property {
+                name: "UID".to_string(),
+                params: None,
+                value: Some("abc".to_string()),
+            },
+            ical::property::Property {
+                name: "DTSTART".to_string(),
+                params: Some(vec![(
+                    "TZID".to_string(),
+                    vec!["America/New_York".to_string()],
+                )]),
+                value: Some("20240101T050000".to_string()),
+            },
+        ];
+
+        let parsed = ParsedEvent::new(event)?;
+        let dtstart = parsed.dtstart.expect("dtstart should parse");
+
+        assert_eq!(
+            dtstart,
+            rrule::Tz::UTC
+                .with_ymd_and_hms(2024, 1, 1, 10, 0, 0)
+                .single()
+                .expect("valid datetime"),
+        );
+
         Ok(())
     }
 }
