@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 
 use chrono::DateTime;
 use chrono::TimeZone;
@@ -122,6 +122,7 @@ fn is_datetime(str: &str) -> bool {
 
 fn ical_datetime_or_date_to_rust_datetime(
     prop: Option<&EventProperty>,
+    default_timezone: Option<ChronoTz>,
 ) -> Result<Option<DateTime<rrule::Tz>>> {
     use chrono::NaiveDateTime;
 
@@ -129,11 +130,12 @@ fn ical_datetime_or_date_to_rust_datetime(
         if let Some(input_ref) = input.as_deref() {
             // First check if we have a TZID parameter
             let tzid = params.get("TZID").and_then(|v| v.first()).cloned();
+            let has_z_suffix = input_ref.ends_with('Z');
 
             // Parse the datetime string based on whether it contains 'T' (datetime) or not (date)
             let naive_dt = if is_datetime(input_ref) {
                 // Parse as datetime (UTC values end with 'Z'; local times omit it per RFC 5545 §3.3.5)
-                if input_ref.ends_with('Z') {
+                if has_z_suffix {
                     NaiveDateTime::parse_from_str(input_ref, "%Y%m%dT%H%M%SZ")?
                 } else {
                     NaiveDateTime::parse_from_str(input_ref, "%Y%m%dT%H%M%S")?
@@ -144,6 +146,17 @@ fn ical_datetime_or_date_to_rust_datetime(
                     .and_hms_opt(0, 0, 0)
                     .ok_or_else(|| anyhow::anyhow!("Invalid time"))?
             };
+
+            if has_z_suffix && tzid.is_some() {
+                return Err(anyhow!(
+                    "DATE-TIME value '{}' includes both a TZID parameter and a 'Z' suffix",
+                    input_ref
+                ));
+            }
+
+            if has_z_suffix {
+                return Ok(Some(rrule::Tz::UTC.from_utc_datetime(&naive_dt)));
+            }
 
             // If we have a TZID, use it, otherwise assume UTC.
             // RFC 5545 §3.2.19 requires DATE-TIME values with TZID parameters to be floating (no trailing 'Z').
@@ -158,8 +171,20 @@ fn ical_datetime_or_date_to_rust_datetime(
                         .with_timezone(&rrule::Tz::UTC),
                 ))
             } else {
-                // No TZID - treat as UTC
-                Ok(Some(rrule::Tz::UTC.from_utc_datetime(&naive_dt)))
+                if is_datetime(input_ref) {
+                    if let Some(tz) = default_timezone {
+                        Ok(Some(
+                            tz.from_local_datetime(&naive_dt)
+                                .earliest()
+                                .ok_or_else(|| anyhow::anyhow!("Invalid timezone conversion"))?
+                                .with_timezone(&rrule::Tz::UTC),
+                        ))
+                    } else {
+                        Ok(Some(rrule::Tz::UTC.from_utc_datetime(&naive_dt)))
+                    }
+                } else {
+                    Ok(Some(rrule::Tz::UTC.from_utc_datetime(&naive_dt)))
+                }
             }
         } else {
             Ok(None)
@@ -236,6 +261,13 @@ fn get_cloned_prop_value(s: Option<&EventProperty>) -> Result<Option<String>> {
 
 impl ParsedEvent {
     pub fn new(event: ical::parser::ical::component::IcalEvent) -> Result<ParsedEvent> {
+        Self::with_default_timezone(event, None)
+    }
+
+    pub fn with_default_timezone(
+        event: ical::parser::ical::component::IcalEvent,
+        default_timezone: Option<ChronoTz>,
+    ) -> Result<ParsedEvent> {
         let known_props = props2btree(&event.properties);
         let _all_day = parse_single_prop_opt(&known_props, "DTSTART", None, &|v| {
             Ok(v.map(|t| t.1.as_ref().filter(|s| is_datetime(s)))
@@ -244,18 +276,12 @@ impl ParsedEvent {
         .is_some();
 
         let rrule = parse_single_prop_opt(&known_props, "RRULE", None, &get_cloned_prop_value)?;
-        let dtstart = parse_single_prop_opt(
-            &known_props,
-            "DTSTART",
-            None,
-            &ical_datetime_or_date_to_rust_datetime,
-        )?;
-        let mut dtend = parse_single_prop_opt(
-            &known_props,
-            "DTEND",
-            None,
-            &ical_datetime_or_date_to_rust_datetime,
-        )?;
+        let dtstart = parse_single_prop_opt(&known_props, "DTSTART", None, &|prop| {
+            ical_datetime_or_date_to_rust_datetime(prop, default_timezone)
+        })?;
+        let mut dtend = parse_single_prop_opt(&known_props, "DTEND", None, &|prop| {
+            ical_datetime_or_date_to_rust_datetime(prop, default_timezone)
+        })?;
 
         let mut duration =
             parse_single_prop_opt(&known_props, "DURATION", None, &get_cloned_prop_value)?;
@@ -280,7 +306,10 @@ impl ParsedEvent {
         }
 
         let rdate = parse_multiple_props(&known_props, "RDATE", None, &|v| {
-            Ok(ical_datetime_or_date_to_rust_datetime(Some(v))?.unwrap())
+            Ok(
+                ical_datetime_or_date_to_rust_datetime(Some(v), default_timezone)?
+                    .ok_or_else(|| anyhow!("RDATE is missing a value"))?,
+            )
         })?;
 
         let _last_repeat = if rrule.is_none() {
@@ -300,8 +329,12 @@ impl ParsedEvent {
         let valarms = parse_multiple_props(&known_props, "VALARM", None, &|v| {
             let (trigger, action) = v;
             let action = action.iter().cloned().next().expect("action must exist");
-            let trigger_str = trigger.get("TRIGGER").and_then(|v| v.first()).cloned().unwrap_or_default();
-            let description  = Some(action.clone());
+            let trigger_str = trigger
+                .get("TRIGGER")
+                .and_then(|v| v.first())
+                .cloned()
+                .unwrap_or_default();
+            let description = Some(action.clone());
             let duration = trigger.get("DURATION").and_then(|v| v.first()).cloned();
             Ok(ParsedValarm {
                 action,
@@ -443,7 +476,7 @@ impl From<&crate::db::models::EventVersion> for DecalidEvent {
             recurrence_set = recurrence_set.rrule(rrule.unwrap());
         }
         for exdate in &event.exdate {
-            let exdate = ical_datetime_or_date_to_rust_datetime(Some(exdate))
+            let exdate = ical_datetime_or_date_to_rust_datetime(Some(exdate), None)
                 .ok()
                 .flatten()
                 .unwrap();
@@ -469,6 +502,7 @@ mod tests {
 
     use super::*;
     use chrono::{NaiveDateTime, TimeZone};
+    use chrono_tz::Tz as ChronoTz;
 
     #[test]
     fn test_basic_rrule_parsing() -> Result<()> {
@@ -628,6 +662,105 @@ mod tests {
             dtstart,
             rrule::Tz::UTC
                 .with_ymd_and_hms(2024, 1, 1, 10, 0, 0)
+                .single()
+                .expect("valid datetime"),
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_dtstart_with_trailing_z_and_tzid_errors() {
+        let mut event = ical::parser::ical::component::IcalEvent::new();
+        event.properties = vec![
+            ical::property::Property {
+                name: "DTSTAMP".to_string(),
+                params: None,
+                value: Some("20240101T050000Z".to_string()),
+            },
+            ical::property::Property {
+                name: "UID".to_string(),
+                params: None,
+                value: Some("abc".to_string()),
+            },
+            ical::property::Property {
+                name: "DTSTART".to_string(),
+                params: Some(vec![(
+                    "TZID".to_string(),
+                    vec!["America/New_York".to_string()],
+                )]),
+                value: Some("20240101T050000Z".to_string()),
+            },
+        ];
+
+        let result = ParsedEvent::with_default_timezone(event, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_floating_dtstart_uses_default_timezone() -> Result<()> {
+        let mut event = ical::parser::ical::component::IcalEvent::new();
+        event.properties = vec![
+            ical::property::Property {
+                name: "DTSTAMP".to_string(),
+                params: None,
+                value: Some("20240101T050000Z".to_string()),
+            },
+            ical::property::Property {
+                name: "UID".to_string(),
+                params: None,
+                value: Some("floating".to_string()),
+            },
+            ical::property::Property {
+                name: "DTSTART".to_string(),
+                params: None,
+                value: Some("20240101T090000".to_string()),
+            },
+        ];
+
+        let default_tz: ChronoTz = "America/New_York".parse().unwrap();
+        let parsed = ParsedEvent::with_default_timezone(event, Some(default_tz))?;
+        let dtstart = parsed.dtstart.expect("dtstart should parse");
+
+        assert_eq!(
+            dtstart,
+            rrule::Tz::UTC
+                .with_ymd_and_hms(2024, 1, 1, 14, 0, 0)
+                .single()
+                .expect("valid datetime"),
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_floating_dtstart_without_default_timezone_falls_back_to_utc() -> Result<()> {
+        let mut event = ical::parser::ical::component::IcalEvent::new();
+        event.properties = vec![
+            ical::property::Property {
+                name: "DTSTAMP".to_string(),
+                params: None,
+                value: Some("20240101T050000Z".to_string()),
+            },
+            ical::property::Property {
+                name: "UID".to_string(),
+                params: None,
+                value: Some("floating".to_string()),
+            },
+            ical::property::Property {
+                name: "DTSTART".to_string(),
+                params: None,
+                value: Some("20240101T090000".to_string()),
+            },
+        ];
+
+        let parsed = ParsedEvent::new(event)?;
+        let dtstart = parsed.dtstart.expect("dtstart should parse");
+
+        assert_eq!(
+            dtstart,
+            rrule::Tz::UTC
+                .with_ymd_and_hms(2024, 1, 1, 9, 0, 0)
                 .single()
                 .expect("valid datetime"),
         );

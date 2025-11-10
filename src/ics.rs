@@ -1,4 +1,5 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use chrono_tz::Tz as ChronoTz;
 
 use crate::{
     db::{
@@ -21,7 +22,12 @@ pub async fn import_ics(db: &Db, calendar_id: i64, file_path: &str) -> Result<()
 }
 
 /// Import ICS data directly from a string
-pub async fn import_ics_data(db: &Db, calendar_id: i64, url: &str, ics_content: &str) -> Result<()> {
+pub async fn import_ics_data(
+    db: &Db,
+    calendar_id: i64,
+    url: &str,
+    ics_content: &str,
+) -> Result<()> {
     // Check the calendar exists
     let calendar = db.admin().get_calendar_by_id(calendar_id).await?;
 
@@ -51,10 +57,32 @@ pub async fn import_ics_data(db: &Db, calendar_id: i64, url: &str, ics_content: 
             }
         }
 
+        let resolved_timezone_id = primary_timezone_id.or(calendar.timezone_id);
+        let mut default_timezone: Option<ChronoTz> = None;
+        if let Some(tz_id) = resolved_timezone_id {
+            let timezone = timezone_db
+                .get_by_id(tz_id)
+                .await?
+                .ok_or_else(|| anyhow!("Calendar timezone with id {} not found", tz_id))?;
+            default_timezone = Some(
+                timezone
+                    .tzid
+                    .parse()
+                    .map_err(|_| anyhow!("Invalid timezone identifier: {}", timezone.tzid))?,
+            );
+        } else if !calendar.timezone.trim().is_empty() {
+            default_timezone = Some(
+                calendar
+                    .timezone
+                    .parse()
+                    .map_err(|_| anyhow!("Invalid calendar timezone: {}", calendar.timezone))?,
+            );
+        }
+
         // Now process events
         for event in cal.events {
             // Create a new event
-            let event = ParsedEvent::new(event)?;
+            let event = ParsedEvent::with_default_timezone(event, default_timezone)?;
             let event = ParsedEvent {
                 url: Some(url.to_string()),
                 ..event
@@ -114,8 +142,8 @@ pub async fn get_timezone_by_tzid(db: &Db, tzid: &str) -> Result<Option<Timezone
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
     use crate::events::model::ParsedEvent;
+    use anyhow::Result;
 
     #[tokio::test]
     async fn test_small_ics_parse() -> Result<()> {
