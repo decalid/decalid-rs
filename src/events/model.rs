@@ -120,8 +120,48 @@ fn is_datetime(str: &str) -> bool {
     str.contains('T')
 }
 
+fn ensure_timezone_param(property: &mut ical::property::Property, default_timezone: ChronoTz) {
+    let Some(value) = property.value.as_ref() else {
+        return;
+    };
+
+    if !matches!(
+        property.name.as_str(),
+        "DTSTART" | "DTEND" | "RECURRENCE-ID" | "EXDATE" | "RDATE"
+    ) {
+        return;
+    }
+
+    if !is_datetime(value) || value.ends_with('Z') {
+        return;
+    }
+
+    let has_tzid = property
+        .params
+        .as_ref()
+        .map(|params| {
+            params
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("TZID"))
+        })
+        .unwrap_or(false);
+
+    if has_tzid {
+        return;
+    }
+
+    let tzid_value = default_timezone.to_string();
+    match &mut property.params {
+        Some(params) => params.push(("TZID".to_string(), vec![tzid_value])),
+        None => {
+            property.params = Some(vec![("TZID".to_string(), vec![tzid_value])]);
+        }
+    }
+}
+
 fn ical_datetime_or_date_to_rust_datetime(
     prop: Option<&EventProperty>,
+    default_timezone: Option<ChronoTz>,
 ) -> Result<Option<DateTime<rrule::Tz>>> {
     use chrono::NaiveDateTime;
 
@@ -131,7 +171,8 @@ fn ical_datetime_or_date_to_rust_datetime(
             let tzid = params.get("TZID").and_then(|v| v.first()).cloned();
 
             // Parse the datetime string based on whether it contains 'T' (datetime) or not (date)
-            let naive_dt = if is_datetime(input_ref) {
+            let parsed_as_datetime = is_datetime(input_ref);
+            let naive_dt = if parsed_as_datetime {
                 // Parse as datetime (UTC values end with 'Z'; local times omit it per RFC 5545 §3.3.5)
                 if input_ref.ends_with('Z') {
                     NaiveDateTime::parse_from_str(input_ref, "%Y%m%dT%H%M%SZ")?
@@ -158,8 +199,29 @@ fn ical_datetime_or_date_to_rust_datetime(
                         .with_timezone(&rrule::Tz::UTC),
                 ))
             } else {
-                // No TZID - treat as UTC
-                Ok(Some(rrule::Tz::UTC.from_utc_datetime(&naive_dt)))
+                if parsed_as_datetime {
+                    if input_ref.ends_with('Z') {
+                        // UTC datetime
+                        Ok(Some(rrule::Tz::UTC.from_utc_datetime(&naive_dt)))
+                    } else if let Some(default_tz) = default_timezone {
+                        Ok(Some(
+                            default_tz
+                                .from_local_datetime(&naive_dt)
+                                .earliest()
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!("Invalid default timezone conversion")
+                                })?
+                                .with_timezone(&rrule::Tz::UTC),
+                        ))
+                    } else {
+                        Err(anyhow::anyhow!(
+                            "Floating DATE-TIME values require a TZID parameter or calendar default timezone"
+                        ))
+                    }
+                } else {
+                    // DATE values are treated as all-day and normalized to UTC midnight
+                    Ok(Some(rrule::Tz::UTC.from_utc_datetime(&naive_dt)))
+                }
             }
         } else {
             Ok(None)
@@ -182,12 +244,15 @@ fn debug_print_props(props: &EventPropertyMap) {
     println!("[PROPS END]");
 }
 
-fn parse_single_prop<T>(
+fn parse_single_prop<T, F>(
     props: &EventPropertyMap,
     prop_name: &str,
     prop_filter: Option<&dyn Fn(&EventPropertyParams) -> bool>,
-    parser: &dyn Fn(Option<&EventProperty>) -> Result<T>,
-) -> Result<T> {
+    parser: F,
+) -> Result<T>
+where
+    F: Fn(Option<&EventProperty>) -> Result<T>,
+{
     let prop_filter = prop_filter.unwrap_or(&_all_props_ok);
     let prop = props
         .get(prop_name)
@@ -198,12 +263,15 @@ fn parse_single_prop<T>(
     parser(prop)
 }
 
-fn parse_single_prop_opt<T>(
+fn parse_single_prop_opt<T, F>(
     props: &EventPropertyMap,
     prop_name: &str,
     prop_filter: Option<&dyn Fn(&EventPropertyParams) -> bool>,
-    parser: &dyn Fn(Option<&EventProperty>) -> Result<Option<T>>,
-) -> Result<Option<T>> {
+    parser: F,
+) -> Result<Option<T>>
+where
+    F: Fn(Option<&EventProperty>) -> Result<Option<T>>,
+{
     let prop_filter = prop_filter.unwrap_or(&_all_props_ok);
     if let Some(prop) = props.get(prop_name) {
         parser(prop.iter().filter(|f| prop_filter(&f.0)).next())
@@ -212,12 +280,15 @@ fn parse_single_prop_opt<T>(
     }
 }
 
-fn parse_multiple_props<T>(
+fn parse_multiple_props<T, F>(
     props: &EventPropertyMap,
     prop_name: &str,
     prop_filter: Option<&dyn Fn(&EventPropertyParams) -> bool>,
-    parser: &dyn Fn(&EventProperty) -> Result<T>,
-) -> Result<Vec<T>> {
+    parser: F,
+) -> Result<Vec<T>>
+where
+    F: Fn(&EventProperty) -> Result<T>,
+{
     let prop_filter = prop_filter.unwrap_or(&_all_props_ok);
     let props = props.get(prop_name).map_or(Vec::new(), |props| {
         props.iter().filter(|prop| prop_filter(&prop.0)).collect()
@@ -236,29 +307,36 @@ fn get_cloned_prop_value(s: Option<&EventProperty>) -> Result<Option<String>> {
 
 impl ParsedEvent {
     pub fn new(event: ical::parser::ical::component::IcalEvent) -> Result<ParsedEvent> {
+        Self::new_with_default_timezone(event, None)
+    }
+
+    pub fn new_with_default_timezone(
+        mut event: ical::parser::ical::component::IcalEvent,
+        default_timezone: Option<ChronoTz>,
+    ) -> Result<ParsedEvent> {
+        if let Some(default_tz) = default_timezone {
+            for property in event.properties.iter_mut() {
+                ensure_timezone_param(property, default_tz);
+            }
+        }
+
         let known_props = props2btree(&event.properties);
-        let _all_day = parse_single_prop_opt(&known_props, "DTSTART", None, &|v| {
+        let _all_day = parse_single_prop_opt(&known_props, "DTSTART", None, |v| {
             Ok(v.map(|t| t.1.as_ref().filter(|s| is_datetime(s)))
                 .and(Some(true)))
         })?
         .is_some();
 
-        let rrule = parse_single_prop_opt(&known_props, "RRULE", None, &get_cloned_prop_value)?;
-        let dtstart = parse_single_prop_opt(
-            &known_props,
-            "DTSTART",
-            None,
-            &ical_datetime_or_date_to_rust_datetime,
-        )?;
-        let mut dtend = parse_single_prop_opt(
-            &known_props,
-            "DTEND",
-            None,
-            &ical_datetime_or_date_to_rust_datetime,
-        )?;
+        let rrule = parse_single_prop_opt(&known_props, "RRULE", None, get_cloned_prop_value)?;
+        let dtstart = parse_single_prop_opt(&known_props, "DTSTART", None, |prop| {
+            ical_datetime_or_date_to_rust_datetime(prop, default_timezone)
+        })?;
+        let mut dtend = parse_single_prop_opt(&known_props, "DTEND", None, |prop| {
+            ical_datetime_or_date_to_rust_datetime(prop, default_timezone)
+        })?;
 
         let mut duration =
-            parse_single_prop_opt(&known_props, "DURATION", None, &get_cloned_prop_value)?;
+            parse_single_prop_opt(&known_props, "DURATION", None, get_cloned_prop_value)?;
 
         // We must ensure there is both dtend and duration.
         // First, fill dtend in case it does not exist, but duration does:
@@ -279,8 +357,8 @@ impl ParsedEvent {
             }
         }
 
-        let rdate = parse_multiple_props(&known_props, "RDATE", None, &|v| {
-            Ok(ical_datetime_or_date_to_rust_datetime(Some(v))?.unwrap())
+        let rdate = parse_multiple_props(&known_props, "RDATE", None, |v| {
+            Ok(ical_datetime_or_date_to_rust_datetime(Some(v), default_timezone)?.unwrap())
         })?;
 
         let _last_repeat = if rrule.is_none() {
@@ -297,11 +375,15 @@ impl ParsedEvent {
             dates.last().cloned()
         };
 
-        let valarms = parse_multiple_props(&known_props, "VALARM", None, &|v| {
+        let valarms = parse_multiple_props(&known_props, "VALARM", None, |v| {
             let (trigger, action) = v;
             let action = action.iter().cloned().next().expect("action must exist");
-            let trigger_str = trigger.get("TRIGGER").and_then(|v| v.first()).cloned().unwrap_or_default();
-            let description  = Some(action.clone());
+            let trigger_str = trigger
+                .get("TRIGGER")
+                .and_then(|v| v.first())
+                .cloned()
+                .unwrap_or_default();
+            let description = Some(action.clone());
             let duration = trigger.get("DURATION").and_then(|v| v.first()).cloned();
             Ok(ParsedValarm {
                 action,
@@ -315,69 +397,54 @@ impl ParsedEvent {
             _all_day,
             _last_repeat,
 
-            dtstamp: parse_single_prop(&known_props, "DTSTAMP", None, &|v| {
+            dtstamp: parse_single_prop(&known_props, "DTSTAMP", None, |v| {
                 Ok(v.map(|t| t.1.clone()).flatten())
             })?
             .expect("dtstamp property must exist"),
-            uid: parse_single_prop(&known_props, "UID", None, &|v| {
+            uid: parse_single_prop(&known_props, "UID", None, |v| {
                 Ok(v.map(|t| t.1.clone()).flatten())
             })?,
             dtstart,
-            class: parse_single_prop_opt(&known_props, "CLASS", None, &get_cloned_prop_value)?,
-            created: parse_single_prop_opt(&known_props, "CREATED", None, &get_cloned_prop_value)?,
+            class: parse_single_prop_opt(&known_props, "CLASS", None, get_cloned_prop_value)?,
+            created: parse_single_prop_opt(&known_props, "CREATED", None, get_cloned_prop_value)?,
             description: parse_single_prop_opt(
                 &known_props,
                 "DESCRIPTION",
                 None,
-                &get_cloned_prop_value,
+                get_cloned_prop_value,
             )?,
-            geo: parse_single_prop_opt(&known_props, "GEO", None, &get_cloned_prop_value)?,
-            last_mod: parse_single_prop_opt(
-                &known_props,
-                "LAST_MOD",
-                None,
-                &get_cloned_prop_value,
-            )?,
-            location: parse_single_prop_opt(
-                &known_props,
-                "LOCATION",
-                None,
-                &get_cloned_prop_value,
-            )?,
+            geo: parse_single_prop_opt(&known_props, "GEO", None, get_cloned_prop_value)?,
+            last_mod: parse_single_prop_opt(&known_props, "LAST_MOD", None, get_cloned_prop_value)?,
+            location: parse_single_prop_opt(&known_props, "LOCATION", None, get_cloned_prop_value)?,
             organizer: parse_single_prop_opt(
                 &known_props,
                 "ORGANIZER",
                 None,
-                &get_cloned_prop_value,
+                get_cloned_prop_value,
             )?,
-            priority: parse_single_prop_opt(
-                &known_props,
-                "PRIORITY",
-                None,
-                &get_cloned_prop_value,
-            )?,
-            seq: parse_single_prop_opt(&known_props, "SEQ", None, &get_cloned_prop_value)?,
-            status: parse_single_prop_opt(&known_props, "STATUS", None, &get_cloned_prop_value)?,
-            summary: parse_single_prop_opt(&known_props, "SUMMARY", None, &get_cloned_prop_value)?,
-            transp: parse_single_prop_opt(&known_props, "TRANSP", None, &get_cloned_prop_value)?,
-            url: parse_single_prop_opt(&known_props, "URL", None, &get_cloned_prop_value)?,
-            recurid: parse_single_prop_opt(&known_props, "RECURID", None, &get_cloned_prop_value)?,
+            priority: parse_single_prop_opt(&known_props, "PRIORITY", None, get_cloned_prop_value)?,
+            seq: parse_single_prop_opt(&known_props, "SEQ", None, get_cloned_prop_value)?,
+            status: parse_single_prop_opt(&known_props, "STATUS", None, get_cloned_prop_value)?,
+            summary: parse_single_prop_opt(&known_props, "SUMMARY", None, get_cloned_prop_value)?,
+            transp: parse_single_prop_opt(&known_props, "TRANSP", None, get_cloned_prop_value)?,
+            url: parse_single_prop_opt(&known_props, "URL", None, get_cloned_prop_value)?,
+            recurid: parse_single_prop_opt(&known_props, "RECURID", None, get_cloned_prop_value)?,
             rrule,
             dtend,
             duration,
 
-            attach: parse_multiple_props(&known_props, "ATTACH", None, &|v| Ok(v.clone()))?,
-            attendee: parse_multiple_props(&known_props, "ATTENDEE", None, &|v| Ok(v.clone()))?,
-            categories: parse_multiple_props(&known_props, "CATEGORIES", None, &|v| Ok(v.clone()))?,
-            comment: parse_multiple_props(&known_props, "COMMENT", None, &|v| Ok(v.clone()))?,
-            contact: parse_multiple_props(&known_props, "CONTACT", None, &|v| Ok(v.clone()))?,
-            exdate: parse_multiple_props(&known_props, "EXDATE", None, &|v| Ok(v.clone()))?,
-            rstatus: parse_multiple_props(&known_props, "RSTATUS", None, &|v| Ok(v.clone()))?,
-            related: parse_multiple_props(&known_props, "RELATED", None, &|v| Ok(v.clone()))?,
-            resources: parse_multiple_props(&known_props, "RESOURCES", None, &|v| Ok(v.clone()))?,
+            attach: parse_multiple_props(&known_props, "ATTACH", None, |v| Ok(v.clone()))?,
+            attendee: parse_multiple_props(&known_props, "ATTENDEE", None, |v| Ok(v.clone()))?,
+            categories: parse_multiple_props(&known_props, "CATEGORIES", None, |v| Ok(v.clone()))?,
+            comment: parse_multiple_props(&known_props, "COMMENT", None, |v| Ok(v.clone()))?,
+            contact: parse_multiple_props(&known_props, "CONTACT", None, |v| Ok(v.clone()))?,
+            exdate: parse_multiple_props(&known_props, "EXDATE", None, |v| Ok(v.clone()))?,
+            rstatus: parse_multiple_props(&known_props, "RSTATUS", None, |v| Ok(v.clone()))?,
+            related: parse_multiple_props(&known_props, "RELATED", None, |v| Ok(v.clone()))?,
+            resources: parse_multiple_props(&known_props, "RESOURCES", None, |v| Ok(v.clone()))?,
             rdate,
-            x_prop: parse_multiple_props(&known_props, "X_PROP", None, &|v| Ok(v.clone()))?,
-            iana_prop: parse_multiple_props(&known_props, "IANA_PROP", None, &|v| Ok(v.clone()))?,
+            x_prop: parse_multiple_props(&known_props, "X_PROP", None, |v| Ok(v.clone()))?,
+            iana_prop: parse_multiple_props(&known_props, "IANA_PROP", None, |v| Ok(v.clone()))?,
             valarms,
 
             inner: event,
@@ -443,7 +510,7 @@ impl From<&crate::db::models::EventVersion> for DecalidEvent {
             recurrence_set = recurrence_set.rrule(rrule.unwrap());
         }
         for exdate in &event.exdate {
-            let exdate = ical_datetime_or_date_to_rust_datetime(Some(exdate))
+            let exdate = ical_datetime_or_date_to_rust_datetime(Some(exdate), None)
                 .ok()
                 .flatten()
                 .unwrap();
@@ -469,6 +536,7 @@ mod tests {
 
     use super::*;
     use chrono::{NaiveDateTime, TimeZone};
+    use chrono_tz::Tz as ChronoTz;
 
     #[test]
     fn test_basic_rrule_parsing() -> Result<()> {
@@ -477,7 +545,7 @@ mod tests {
             ical::property::Property {
                 name: "DTSTAMP".to_string(),
                 params: None,
-                value: Some("20240101T100000".to_string()),
+                value: Some("20240101T100000Z".to_string()),
             },
             ical::property::Property {
                 name: "UID".to_string(),
@@ -487,7 +555,7 @@ mod tests {
             ical::property::Property {
                 name: "DTSTART".to_string(),
                 params: None,
-                value: Some("20240101T100000".to_string()),
+                value: Some("20240101T100000Z".to_string()),
             },
             ical::property::Property {
                 name: "RRULE".to_string(),
@@ -534,7 +602,7 @@ mod tests {
             ical::property::Property {
                 name: "DTSTAMP".to_string(),
                 params: None,
-                value: Some("20240101T100000".to_string()),
+                value: Some("20240101T100000Z".to_string()),
             },
             ical::property::Property {
                 name: "UID".to_string(),
@@ -544,7 +612,7 @@ mod tests {
             ical::property::Property {
                 name: "DTSTART".to_string(),
                 params: None,
-                value: Some("20240101T100000".to_string()),
+                value: Some("20240101T100000Z".to_string()),
             },
             ical::property::Property {
                 name: "RRULE".to_string(),
@@ -554,7 +622,7 @@ mod tests {
             ical::property::Property {
                 name: "EXDATE".to_string(),
                 params: None,
-                value: Some("20240102T100000".to_string()),
+                value: Some("20240102T100000Z".to_string()),
             },
         ];
 
@@ -571,7 +639,12 @@ mod tests {
         for exdate in &parsed.exdate {
             let (_, value) = exdate;
             if let Some(date_str) = value {
-                if let Ok(dt) = NaiveDateTime::parse_from_str(&date_str, "%Y%m%dT%H%M%S") {
+                let parsed_exdate = if date_str.ends_with('Z') {
+                    NaiveDateTime::parse_from_str(&date_str, "%Y%m%dT%H%M%SZ").ok()
+                } else {
+                    NaiveDateTime::parse_from_str(&date_str, "%Y%m%dT%H%M%S").ok()
+                };
+                if let Some(dt) = parsed_exdate {
                     let utc_dt = rrule::Tz::UTC.from_utc_datetime(&dt);
                     recurrence_set = recurrence_set.exdate(utc_dt);
                 }
@@ -631,6 +704,54 @@ mod tests {
                 .single()
                 .expect("valid datetime"),
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_floating_dtstart_uses_default_timezone() -> Result<()> {
+        let mut event = ical::parser::ical::component::IcalEvent::new();
+        event.properties = vec![
+            ical::property::Property {
+                name: "DTSTAMP".to_string(),
+                params: None,
+                value: Some("20240101T050000Z".to_string()),
+            },
+            ical::property::Property {
+                name: "UID".to_string(),
+                params: None,
+                value: Some("floating".to_string()),
+            },
+            ical::property::Property {
+                name: "DTSTART".to_string(),
+                params: None,
+                value: Some("20240101T050000".to_string()),
+            },
+        ];
+
+        let default_tz: ChronoTz = "America/New_York".parse().unwrap();
+        let parsed = ParsedEvent::new_with_default_timezone(event, Some(default_tz))?;
+        let dtstart = parsed.dtstart.expect("dtstart should parse");
+
+        assert_eq!(
+            dtstart,
+            rrule::Tz::UTC
+                .with_ymd_and_hms(2024, 1, 1, 10, 0, 0)
+                .single()
+                .expect("valid datetime"),
+        );
+
+        let tzid = parsed
+            .inner
+            .properties
+            .iter()
+            .find(|prop| prop.name == "DTSTART")
+            .and_then(|prop| prop.params.as_ref())
+            .and_then(|params| params.iter().find(|(name, _)| name == "TZID"))
+            .and_then(|(_, values)| values.first())
+            .cloned();
+
+        assert_eq!(tzid.as_deref(), Some("America/New_York"));
 
         Ok(())
     }

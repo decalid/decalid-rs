@@ -6,7 +6,7 @@ use crate::{
         Db,
     },
     events::model::ParsedEvent,
-    timezone::ParsedTimezone,
+    timezone::{parse_chrono_tz, resolve_timezone_reference, ParsedTimezone},
 };
 
 pub async fn import_ics(db: &Db, calendar_id: i64, file_path: &str) -> Result<()> {
@@ -21,7 +21,12 @@ pub async fn import_ics(db: &Db, calendar_id: i64, file_path: &str) -> Result<()
 }
 
 /// Import ICS data directly from a string
-pub async fn import_ics_data(db: &Db, calendar_id: i64, url: &str, ics_content: &str) -> Result<()> {
+pub async fn import_ics_data(
+    db: &Db,
+    calendar_id: i64,
+    url: &str,
+    ics_content: &str,
+) -> Result<()> {
     // Check the calendar exists
     let calendar = db.admin().get_calendar_by_id(calendar_id).await?;
 
@@ -51,10 +56,26 @@ pub async fn import_ics_data(db: &Db, calendar_id: i64, url: &str, ics_content: 
             }
         }
 
+        let default_timezone = if let Some(timezone_id) = primary_timezone_id {
+            timezone_db
+                .get_by_id(timezone_id)
+                .await?
+                .map(|tz| resolve_timezone_reference(&tz.tzid))
+                .or_else(|| {
+                    let tz = calendar.timezone.trim();
+                    (!tz.is_empty()).then(|| resolve_timezone_reference(tz))
+                })
+        } else {
+            let tz = calendar.timezone.trim();
+            (!tz.is_empty()).then(|| resolve_timezone_reference(tz))
+        }
+        .map(|tzid| parse_chrono_tz(&tzid))
+        .transpose()?;
+
         // Now process events
         for event in cal.events {
             // Create a new event
-            let event = ParsedEvent::new(event)?;
+            let event = ParsedEvent::new_with_default_timezone(event, default_timezone)?;
             let event = ParsedEvent {
                 url: Some(url.to_string()),
                 ..event
@@ -114,8 +135,8 @@ pub async fn get_timezone_by_tzid(db: &Db, tzid: &str) -> Result<Option<Timezone
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
     use crate::events::model::ParsedEvent;
+    use anyhow::Result;
 
     #[tokio::test]
     async fn test_small_ics_parse() -> Result<()> {
