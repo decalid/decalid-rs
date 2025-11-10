@@ -5,6 +5,7 @@ use decalid::{
     caldav::client::{CalDavAuth, CalDavClient, CalDavConfig, ClientIcsData},
     db::{models::SyncInfo, Db},
     events::model::ParsedEvent,
+    timezone::{parse_chrono_tz, resolve_timezone_reference},
 };
 
 /// Add a CalDAV source to a calendar
@@ -118,21 +119,43 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
     
     // Use the sync token if available for efficient syncing
     info!("Fetching events from {} using sync token: {:?}", url, source.sync_info);
-    let (events, new_sync_info) = client.fetch_calendar_events_with_sync(url, source.sync_info).await?;
-    
+    let (events, new_sync_info) = client
+        .fetch_calendar_events_with_sync(url, source.sync_info)
+        .await?;
+
     // Process each event
     info!("Processing {} events for calendar {}", events.len(), calendar_id);
     let events_db = db.events(calendar_id);
-    
+    let calendar = db.admin().get_calendar_by_id(calendar_id).await?;
+    let default_timezone = if let Some(timezone_id) = calendar.timezone_id {
+        db.timezones()
+            .get_by_id(timezone_id)
+            .await?
+            .map(|tz| resolve_timezone_reference(&tz.tzid))
+    } else {
+        None
+    }
+    .or_else(|| {
+        let tz = calendar.timezone.trim();
+        if tz.is_empty() {
+            None
+        } else {
+            Some(resolve_timezone_reference(tz))
+        }
+    })
+    .map(|tzid| parse_chrono_tz(&tzid))
+    .transpose()?;
+
     for ClientIcsData { ics, url } in events {
         // Parse the ICS data to extract events
         let reader = ical::IcalParser::new(ics.as_bytes());
-        
+
         for cal_result in reader {
             let cal = cal_result?;
             for event in cal.events {
                 // Create a new event
-                let parsed_event = ParsedEvent::new(event)?;
+                let parsed_event =
+                    ParsedEvent::new_with_default_timezone(event, default_timezone)?;
                 let parsed_event = ParsedEvent {
                     url: Some(url.clone()),
                     ..parsed_event
