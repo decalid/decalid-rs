@@ -782,7 +782,7 @@ mod tests {
                     ical::property::Property {
                         name: "DTSTAMP".to_string(),
                         params: None,
-                        value: Some("20240101T100000".to_string()),
+                        value: Some("20240101T100000Z".to_string()),
                     },
                     ical::property::Property {
                         name: "UID".to_string(),
@@ -792,7 +792,7 @@ mod tests {
                     ical::property::Property {
                         name: "DTSTART".to_string(),
                         params: None,
-                        value: Some("20240101T100000".to_string()),
+                        value: Some("20240101T100000Z".to_string()),
                     },
                     ical::property::Property {
                         name: "RRULE".to_string(),
