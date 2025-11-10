@@ -57,36 +57,36 @@ fn normalize_ics(ics: &str) -> String {
 async fn test_parse_timezone() -> Result<()> {
     // Parse the ICS content
     let reader = ical::IcalParser::new(SAMPLE_ICS_WITH_TIMEZONE.as_bytes());
-    
+
     let mut found_timezone = false;
-    
+
     for cal_result in reader {
         let cal = cal_result?;
-        
+
         for timezone in cal.timezones {
             let parsed_timezone = ParsedTimezone::new(timezone)?;
-            
+
             // Verify the timezone data
             assert_eq!(parsed_timezone.tzid, "America/New_York");
             assert_eq!(parsed_timezone.standard_rules.len(), 1);
             assert_eq!(parsed_timezone.daylight_rules.len(), 1);
-            
+
             // Verify standard rule
             let standard = &parsed_timezone.standard_rules[0];
             assert_eq!(standard.tzoffsetfrom, "-0400");
             assert_eq!(standard.tzoffsetto, "-0500");
-            
+
             // Verify daylight rule
             let daylight = &parsed_timezone.daylight_rules[0];
             assert_eq!(daylight.tzoffsetfrom, "-0500");
             assert_eq!(daylight.tzoffsetto, "-0400");
-            
+
             found_timezone = true;
         }
     }
-    
+
     assert!(found_timezone, "No timezone was found in the test data");
-    
+
     Ok(())
 }
 
@@ -94,43 +94,50 @@ async fn test_parse_timezone() -> Result<()> {
 async fn test_timezone_db_storage() -> Result<()> {
     // Create an in-memory SQLite database
     let pool = SqlitePool::connect("sqlite::memory:").await?;
-    
+
     // Run migrations to set up the schema
     sqlx::migrate!().run(&pool).await?;
-    
+
     let db = Db::new(pool);
-    
+
     // Parse the ICS content
     let reader = ical::IcalParser::new(SAMPLE_ICS_WITH_TIMEZONE.as_bytes());
-    
+
     for cal_result in reader {
         let cal = cal_result?;
-        
+
         for timezone in cal.timezones {
             let parsed_timezone = ParsedTimezone::new(timezone)?;
-            
+
             // Save timezone to database
             let saved_timezone = db.timezones().save_timezone(&parsed_timezone).await?;
-            
+
             // Retrieve timezone from database by TZID
-            let retrieved_timezone = db.timezones().get_by_tzid(&parsed_timezone.tzid).await?
+            let retrieved_timezone = db
+                .timezones()
+                .get_by_tzid(&parsed_timezone.tzid)
+                .await?
                 .expect("Timezone should exist in database");
-            
+
             // Verify the retrieved timezone matches the original
             assert_eq!(retrieved_timezone.tzid, parsed_timezone.tzid);
-            
+
             // Get the rules for the saved timezone
             let rules = db.timezones().get_rules(saved_timezone.id).await?;
-            
+
             // Verify we have both standard and daylight rules
             assert_eq!(rules.len(), 2);
-            
+
             // Verify the rules match what we expect
-            let standard_rule = rules.iter().find(|r| r.rule_type == "STANDARD")
+            let standard_rule = rules
+                .iter()
+                .find(|r| r.rule_type == "STANDARD")
                 .expect("Should have a STANDARD rule");
-            let daylight_rule = rules.iter().find(|r| r.rule_type == "DAYLIGHT")
+            let daylight_rule = rules
+                .iter()
+                .find(|r| r.rule_type == "DAYLIGHT")
                 .expect("Should have a DAYLIGHT rule");
-            
+
             assert_eq!(standard_rule.tzoffsetfrom, "-0400");
             assert_eq!(standard_rule.tzoffsetto, "-0500");
             assert_eq!(daylight_rule.tzoffsetfrom, "-0500");
@@ -138,17 +145,22 @@ async fn test_timezone_db_storage() -> Result<()> {
 
             // Verify that the raw ICS data matches the original
             // First, normalize both the original and stored ICS to remove carriage returns and empty lines
-            let original_ics = normalize_ics(&SAMPLE_ICS_WITH_TIMEZONE
-                .lines()
-                .skip_while(|line| !line.starts_with("BEGIN:VTIMEZONE"))
-                .take_while(|line| !line.starts_with("BEGIN:VEVENT"))
-                .collect::<Vec<_>>()
-                .join("\n"));
+            let original_ics = normalize_ics(
+                &SAMPLE_ICS_WITH_TIMEZONE
+                    .lines()
+                    .skip_while(|line| !line.starts_with("BEGIN:VTIMEZONE"))
+                    .take_while(|line| !line.starts_with("BEGIN:VEVENT"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
             let stored_ics = normalize_ics(&retrieved_timezone.raw_data);
-            
-            assert_eq!(original_ics, stored_ics, "Stored ICS data should match original");
+
+            assert_eq!(
+                original_ics, stored_ics,
+                "Stored ICS data should match original"
+            );
         }
     }
-    
+
     Ok(())
 }

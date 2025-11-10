@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use yaserde::{YaDeserialize, YaSerialize};
 
 use super::propfind::Prop;
@@ -33,7 +35,6 @@ pub(super) struct SyncCollection {
     #[yaserde(prefix = "d", rename = "sync-level")]
     pub sync_level: Option<i64>,
 }
-
 
 #[derive(YaSerialize, YaDeserialize, Debug)]
 #[yaserde(

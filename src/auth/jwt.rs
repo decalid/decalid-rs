@@ -134,7 +134,7 @@ pub mod middleware {
                 JWTErrors::NoToken => write!(f, "No token provided"),
                 JWTErrors::InvalidToken => write!(f, "Invalid token"),
                 JWTErrors::InvalidTokenFormat => write!(f, "Invalid token format"),
-                JWTErrors::InternalError(e) => write!(f, "Internal error: {}", e),
+                JWTErrors::InternalError(e) => write!(f, "Internal error: {e}"),
                 JWTErrors::UnknownInternalError => write!(f, "Unknown internal error"),
             }
         }
@@ -190,13 +190,11 @@ pub mod middleware {
             let token = req
                 .headers()
                 .get("Authorization")
-                .map(|value| value.to_str().unwrap_or_default())
-                .unwrap_or_default()
-                .to_string();
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.strip_prefix("Bearer "))
+                .map(str::to_owned);
 
-            let token = if token.starts_with("Bearer ") {
-                token["Bearer ".len()..].to_string()
-            } else {
+            let Some(token) = token else {
                 println!("No token provided");
                 return Box::pin(async move { Ok(JWTMiddlewareResponse(Err(JWTErrors::NoToken))) });
             };

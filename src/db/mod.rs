@@ -4,8 +4,8 @@ pub mod actions_shares;
 pub mod actions_timezone;
 pub mod actions_users;
 pub mod models;
-use chrono::{DateTime, TimeZone};
 use anyhow::Result;
+use chrono::{DateTime, TimeZone};
 
 use crate::events::model::DecalidEvent;
 
@@ -38,10 +38,10 @@ impl Db {
         self.0.close().await
     }
 
-    pub fn admin(&self) -> AdminDb {
+    pub fn admin(&self) -> AdminDb<'_> {
         AdminDb { db: self }
     }
-    pub fn events(&self, calendar_id: i64) -> EventsDb {
+    pub fn events(&self, calendar_id: i64) -> EventsDb<'_> {
         EventsDb {
             db: self,
             calendar_id,
@@ -52,22 +52,26 @@ impl Db {
         SharesDb { db: self, share_id }
     }
 
-    pub fn users(&self) -> UsersDb {
+    pub fn users(&self) -> UsersDb<'_> {
         UsersDb { db: self }
     }
 
-    pub fn timezones(&self) -> TimezoneDb {
+    pub fn timezones(&self) -> TimezoneDb<'_> {
         TimezoneDb { db: self }
     }
 
-    pub async fn list_calendars(self: &Self, user_id: i64) -> Result<Vec<Calendar>, sqlx::Error> {
+    pub async fn list_calendars(&self, user_id: i64) -> Result<Vec<Calendar>, sqlx::Error> {
         sqlx::query_as::<_, Calendar>("SELECT * FROM calendars WHERE user_id = ?")
             .bind(user_id)
             .fetch_all(&self.0)
             .await
     }
 
-    pub async fn get_calendar(self: &Self, user_id: i64, calendar_id: i64) -> Result<Calendar, sqlx::Error> {
+    pub async fn get_calendar(
+        &self,
+        user_id: i64,
+        calendar_id: i64,
+    ) -> Result<Calendar, sqlx::Error> {
         sqlx::query_as::<_, Calendar>("SELECT * FROM calendars WHERE user_id = ? AND id = ?")
             .bind(user_id)
             .bind(calendar_id)
@@ -76,7 +80,7 @@ impl Db {
     }
 
     pub async fn get_calendar_source(
-        self: &Self,
+        &self,
         calendar_id: i64,
     ) -> Result<CalendarSource, sqlx::Error> {
         sqlx::query_as::<_, CalendarSource>("SELECT * FROM calendar_sources WHERE calendar_id = ?")
@@ -86,7 +90,7 @@ impl Db {
     }
 
     pub async fn create_calendar_source(
-        self: &Self,
+        &self,
         calendar_id: i64,
         caldav_url: &str,
     ) -> Result<CalendarSource, sqlx::Error> {
@@ -100,7 +104,7 @@ impl Db {
     }
 
     pub async fn delete_calendar_source(
-        self: &Self,
+        &self,
         calendar_id: i64,
         source_id: i64,
     ) -> Result<(), sqlx::Error> {
@@ -115,7 +119,7 @@ impl Db {
     /// Gets the current version of events between some dates.
     /// It does not return already-removed events
     pub async fn create_calendar(
-        self: &Self,
+        &self,
         user_id: i64,
         name: &str,
         color: Option<&str>,
@@ -130,11 +134,7 @@ impl Db {
         .await
     }
 
-    pub async fn delete_calendar(
-        self: &Self,
-        user_id: i64,
-        calendar_id: i64,
-    ) -> Result<(), sqlx::Error> {
+    pub async fn delete_calendar(&self, user_id: i64, calendar_id: i64) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM calendars WHERE user_id = ? AND id = ?")
             .bind(user_id)
             .bind(calendar_id)
@@ -146,7 +146,7 @@ impl Db {
     /// Gets the current version of events between some dates.
     /// It does not return already-removed events
     pub async fn get_current_events_between_dates<Tz: TimeZone>(
-        self: &Self,
+        &self,
         calendar_id: i64,
         min_date: DateTime<Tz>,
         max_date: DateTime<Tz>,

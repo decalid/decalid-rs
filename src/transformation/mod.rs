@@ -65,17 +65,27 @@ impl DslEngine {
                             for event in events {
                                 match event {
                                     dsl::SExpr::Event(event) => filtered.push(event),
-                                    _ => return Err(anyhow::anyhow!("Expected event, got {:?}", event)),
+                                    _ => {
+                                        return Err(anyhow::anyhow!(
+                                            "Expected event, got {event:?}",
+                                        ))
+                                    }
                                 }
                             }
                         }
-                        _ => return Err(anyhow::anyhow!("Expected event, got {:?}", result)),
+                        _ => return Err(anyhow::anyhow!("Expected event, got {result:?}")),
                     }
                 }
                 Ok(filtered)
             }
             None => Err(anyhow::anyhow!("DSL expression not compiled")),
         }
+    }
+}
+
+impl Default for DslEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -55,7 +55,7 @@ impl<'a> EventsDb<'a> {
             }
         };
         let next_version = event_record.last_version.unwrap_or(0) + 1;
-        log::debug!("Got event = {:?}, next version will be {}", event, next_version);
+        log::debug!("Got event = {event:?}, next version will be {next_version}");
 
         // Serialize the event to ICS format
         let event_raw_data = event.serialize();

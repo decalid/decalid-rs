@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::str::FromStr;
 
 use http::StatusCode;
@@ -90,7 +92,7 @@ pub(super) struct WithStatus<P> {
 impl Response {
     pub(super) fn all_props(&self) -> impl Iterator<Item = WithStatus<&Prop>> {
         self.propstat.iter().flat_map(|propstat| {
-            let status_code = propstat.status.split(' ').skip(1).next().unwrap();
+            let status_code = propstat.status.split(' ').nth(1).unwrap();
             let status = StatusCode::from_str(status_code).unwrap();
             propstat
                 .prop
@@ -101,13 +103,12 @@ impl Response {
 
     pub(super) fn into_all_props(self) -> impl Iterator<Item = WithStatus<Prop>> {
         self.propstat.into_iter().flat_map(|propstat| {
-            let status_code = propstat.status.split(' ').skip(1).next().unwrap();
+            let status_code = propstat.status.split(' ').nth(1).unwrap();
             let status = StatusCode::from_str(status_code).unwrap();
             propstat
                 .prop
                 .into_iter()
                 .map(move |prop| WithStatus { prop, status })
-                .into_iter()
         })
     }
 
@@ -122,8 +123,7 @@ impl Response {
     pub(super) fn _get_prop<F>(&self, checker: impl Fn(&Prop) -> Option<&F>) -> Option<&F> {
         self.ok_props_iter()
             .drop_status()
-            .filter(|prop| checker(prop).is_some())
-            .flat_map(|prop| checker(prop))
+            .filter_map(checker)
             .next()
     }
 

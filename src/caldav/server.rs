@@ -1,3 +1,5 @@
+#![allow(clippy::should_implement_trait)]
+
 use axum::{
     body::Body,
     extract::{rejection::PathRejection, Path, State},
@@ -61,7 +63,7 @@ async fn webdav_propfind(
         .map(|header| header.to_str().unwrap())
         .unwrap_or("localhost");
     let use_tls = ""; // TODO: implement this check
-    let host = format!("http{}://{}", use_tls, host);
+    let host = format!("http{use_tls}://{host}");
 
     let allowed_calendar_components = vec![
         propfind::PropSupportedCalendarComponent {
@@ -223,7 +225,7 @@ async fn webdav_propfind(
                             calendar_data: when_in_payload(
                                 &payload,
                                 |prop| &prop.calendar_data,
-                                || propfind::PropCalendarData::default(),
+                                propfind::PropCalendarData::default,
                             ),
                         }],
                         status: "HTTP/1.1 200 OK".to_string(),
@@ -238,8 +240,10 @@ async fn webdav_propfind(
         responses,
     };
 
-    let mut xml_config = yaserde::ser::Config::default();
-    xml_config.perform_indent = true;
+    let xml_config = yaserde::ser::Config {
+        perform_indent: true,
+        ..Default::default()
+    };
     let properties_xml = yaserde::ser::to_string_with_config(&propfind_response, &xml_config)
         .expect("Failed to serialize to XML");
     Ok(webdav_response_builder()

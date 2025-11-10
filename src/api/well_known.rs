@@ -8,7 +8,7 @@ use axum::{
 };
 
 async fn wellknown_redirect_to_shareroot(request: Request<Body>) -> impl IntoResponse {
-    if request.method().as_str().to_ascii_uppercase() == "PROPFIND" {
+    if request.method().as_str().eq_ignore_ascii_case("PROPFIND") {
         Response::builder()
             .header("Location", "/shares/")
             .status(StatusCode::FOUND)

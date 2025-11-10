@@ -222,7 +222,8 @@ mod tests {
                     ._get_prop_string(|prop| prop.displayname.as_ref())
                     .unwrap_or_else(|| "Unnamed Calendar".to_string());
                 let color = response._get_prop_string(|prop| prop.calendar_color.as_ref());
-                let description = response._get_prop_string(|prop| prop.calendar_description.as_ref());
+                let description =
+                    response._get_prop_string(|prop| prop.calendar_description.as_ref());
                 let ctag = response._get_prop_string(|prop| prop.getetag.as_ref());
 
                 calendars.push(CalendarInfo {

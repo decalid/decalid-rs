@@ -92,12 +92,12 @@ fn slice2btreemap<KA: Ord, KB: Ord, B: Clone>(
 ) -> BTreeMap<KB, B> {
     let mut map = BTreeMap::new();
     for (key, value) in vec {
-        map.insert(f_keys(&key), value.clone());
+        map.insert(f_keys(key), value.clone());
     }
     map
 }
 
-pub(crate) fn props2btree(props: &Vec<ical::property::Property>) -> EventPropertyMap {
+pub(crate) fn props2btree(props: &[ical::property::Property]) -> EventPropertyMap {
     let mut known_props = BTreeMap::new();
 
     for prop in props.iter() {
@@ -149,8 +149,7 @@ fn ical_datetime_or_date_to_rust_datetime(
 
             if has_z_suffix && tzid.is_some() {
                 return Err(anyhow!(
-                    "DATE-TIME value '{}' includes both a TZID parameter and a 'Z' suffix",
-                    input_ref
+                    "DATE-TIME value '{input_ref}' includes both a TZID parameter and a 'Z' suffix"
                 ));
             }
 
@@ -163,28 +162,26 @@ fn ical_datetime_or_date_to_rust_datetime(
             if let Some(tz_name) = tzid {
                 let tz: ChronoTz = tz_name
                     .parse()
-                    .map_err(|_| anyhow::anyhow!("Invalid timezone: {}", tz_name))?;
+                    .map_err(|_| anyhow::anyhow!("Invalid timezone: {tz_name}"))?;
                 Ok(Some(
                     tz.from_local_datetime(&naive_dt)
                         .earliest()
                         .ok_or_else(|| anyhow::anyhow!("Invalid timezone conversion"))?
                         .with_timezone(&rrule::Tz::UTC),
                 ))
-            } else {
-                if is_datetime(input_ref) {
-                    if let Some(tz) = default_timezone {
-                        Ok(Some(
-                            tz.from_local_datetime(&naive_dt)
-                                .earliest()
-                                .ok_or_else(|| anyhow::anyhow!("Invalid timezone conversion"))?
-                                .with_timezone(&rrule::Tz::UTC),
-                        ))
-                    } else {
-                        Ok(Some(rrule::Tz::UTC.from_utc_datetime(&naive_dt)))
-                    }
+            } else if is_datetime(input_ref) {
+                if let Some(tz) = default_timezone {
+                    Ok(Some(
+                        tz.from_local_datetime(&naive_dt)
+                            .earliest()
+                            .ok_or_else(|| anyhow::anyhow!("Invalid timezone conversion"))?
+                            .with_timezone(&rrule::Tz::UTC),
+                    ))
                 } else {
                     Ok(Some(rrule::Tz::UTC.from_utc_datetime(&naive_dt)))
                 }
+            } else {
+                Ok(Some(rrule::Tz::UTC.from_utc_datetime(&naive_dt)))
             }
         } else {
             Ok(None)
@@ -202,7 +199,7 @@ fn _all_props_ok(_params: &EventPropertyParams) -> bool {
 fn debug_print_props(props: &EventPropertyMap) {
     println!("[PROPS BEGIN]");
     for (prop_name, prop_list) in props.iter() {
-        println!("Property {}: {:?}", prop_name, prop_list);
+        println!("Property {prop_name}: {prop_list:?}");
     }
     println!("[PROPS END]");
 }
@@ -216,10 +213,9 @@ fn parse_single_prop<T>(
     let prop_filter = prop_filter.unwrap_or(&_all_props_ok);
     let prop = props
         .get(prop_name)
-        .ok_or_else(|| anyhow::anyhow!("Property not found: {}", prop_name))?
+        .ok_or_else(|| anyhow::anyhow!("Property not found: {prop_name}"))?
         .iter()
-        .filter(|f| prop_filter(&f.0))
-        .next();
+        .find(|f| prop_filter(&f.0));
     parser(prop)
 }
 
@@ -231,7 +227,7 @@ fn parse_single_prop_opt<T>(
 ) -> Result<Option<T>> {
     let prop_filter = prop_filter.unwrap_or(&_all_props_ok);
     if let Some(prop) = props.get(prop_name) {
-        parser(prop.iter().filter(|f| prop_filter(&f.0)).next())
+        parser(prop.iter().find(|f| prop_filter(&f.0)))
     } else {
         Ok(None)
     }
@@ -250,13 +246,13 @@ fn parse_multiple_props<T>(
 
     let mut parsed_props = Vec::new();
     for prop in props {
-        parsed_props.push(parser(&prop)?);
+        parsed_props.push(parser(prop)?);
     }
     Ok(parsed_props)
 }
 
 fn get_cloned_prop_value(s: Option<&EventProperty>) -> Result<Option<String>> {
-    Ok(s.map(|inner| inner.1.clone()).flatten())
+    Ok(s.and_then(|inner| inner.1.clone()))
 }
 
 impl ParsedEvent {
@@ -270,8 +266,7 @@ impl ParsedEvent {
     ) -> Result<ParsedEvent> {
         let known_props = props2btree(&event.properties);
         let _all_day = parse_single_prop_opt(&known_props, "DTSTART", None, &|v| {
-            Ok(v.map(|t| t.1.as_ref().filter(|s| is_datetime(s)))
-                .and(Some(true)))
+            Ok(v.and_then(|t| t.1.as_ref().filter(|s| is_datetime(s)).map(|_| true)))
         })?
         .is_some();
 
@@ -288,28 +283,25 @@ impl ParsedEvent {
 
         // We must ensure there is both dtend and duration.
         // First, fill dtend in case it does not exist, but duration does:
-        if dtend.is_none() && duration.is_some() {
-            if let Some(dtstart) = dtstart {
-                if let Ok(duration) = iso8601_duration::Duration::parse(duration.as_ref().unwrap())
-                {
-                    let chrono_duration = duration.to_chrono_at_datetime(dtstart);
-                    dtend = Some(dtstart + chrono_duration);
+        if dtend.is_none() {
+            if let (Some(dtstart_value), Some(duration_value)) =
+                (dtstart.as_ref(), duration.as_ref())
+            {
+                if let Ok(duration_parsed) = iso8601_duration::Duration::parse(duration_value) {
+                    let chrono_duration = duration_parsed.to_chrono_at_datetime(*dtstart_value);
+                    dtend = Some(*dtstart_value + chrono_duration);
                 }
             }
-        } else if dtend.is_some() && duration.is_none() {
-            if let Some(dtend) = dtend {
-                if let Some(dtstart) = dtstart {
-                    let duration_ = dtend - dtstart;
-                    duration = Some(duration_.to_iso8601_string())
-                }
+        } else if duration.is_none() {
+            if let (Some(dtend_value), Some(dtstart_value)) = (dtend.as_ref(), dtstart.as_ref()) {
+                let duration_ = *dtend_value - *dtstart_value;
+                duration = Some(duration_.to_iso8601_string())
             }
         }
 
         let rdate = parse_multiple_props(&known_props, "RDATE", None, &|v| {
-            Ok(
-                ical_datetime_or_date_to_rust_datetime(Some(v), default_timezone)?
-                    .ok_or_else(|| anyhow!("RDATE is missing a value"))?,
-            )
+            ical_datetime_or_date_to_rust_datetime(Some(v), default_timezone)?
+                .ok_or_else(|| anyhow!("RDATE is missing a value"))
         })?;
 
         let _last_repeat = if rrule.is_none() {
@@ -317,7 +309,7 @@ impl ParsedEvent {
         } else {
             // Calculate last repeat
             let rrule =
-                rrule::RRule::from_str(&rrule.as_ref().unwrap())?.validate(dtstart.unwrap())?;
+                rrule::RRule::from_str(rrule.as_ref().unwrap())?.validate(dtstart.unwrap())?;
             let dates = rrule::RRuleSet::new(dtstart.unwrap())
                 .rrule(rrule)
                 .set_rdates(rdate.clone())
@@ -328,7 +320,7 @@ impl ParsedEvent {
 
         let valarms = parse_multiple_props(&known_props, "VALARM", None, &|v| {
             let (trigger, action) = v;
-            let action = action.iter().cloned().next().expect("action must exist");
+            let action = action.iter().next().cloned().expect("action must exist");
             let trigger_str = trigger
                 .get("TRIGGER")
                 .and_then(|v| v.first())
@@ -349,11 +341,11 @@ impl ParsedEvent {
             _last_repeat,
 
             dtstamp: parse_single_prop(&known_props, "DTSTAMP", None, &|v| {
-                Ok(v.map(|t| t.1.clone()).flatten())
+                Ok(v.and_then(|t| t.1.clone()))
             })?
             .expect("dtstamp property must exist"),
             uid: parse_single_prop(&known_props, "UID", None, &|v| {
-                Ok(v.map(|t| t.1.clone()).flatten())
+                Ok(v.and_then(|t| t.1.clone()))
             })?,
             dtstart,
             class: parse_single_prop_opt(&known_props, "CLASS", None, &get_cloned_prop_value)?,
@@ -417,7 +409,7 @@ impl ParsedEvent {
         })
     }
 
-    pub fn serialize(self: &Self) -> String {
+    pub fn serialize(&self) -> String {
         let mut output = String::new();
 
         for property in &self.inner.properties {
@@ -453,7 +445,7 @@ impl From<&crate::db::models::EventVersion> for DecalidEvent {
                     std::io::BufReader::new(buffer),
                 ));
                 if let Err(x) = event.parse(&parser) {
-                    panic!("Got a ParserError: {:#?}", x)
+                    panic!("Got a ParserError: {x:#?}")
                 }
             }
             ParsedEvent::new(event).unwrap()
@@ -461,19 +453,13 @@ impl From<&crate::db::models::EventVersion> for DecalidEvent {
 
         let dtstart = event.dtstart.unwrap();
         let mut recurrence_set = rrule::RRuleSet::new(dtstart);
-        let rrule = event
-            .rrule
-            .as_deref()
-            .map(&rrule::RRule::from_str)
-            .transpose()
-            .ok()
-            .flatten()
-            .map(|rrule| rrule::RRule::validate(rrule, dtstart))
-            .transpose()
-            .ok()
-            .flatten();
-        if rrule.is_some() {
-            recurrence_set = recurrence_set.rrule(rrule.unwrap());
+        let rrule = event.rrule.as_deref().and_then(|rrule_str| {
+            rrule::RRule::from_str(rrule_str)
+                .ok()
+                .and_then(|rrule| rrule::RRule::validate(rrule, dtstart).ok())
+        });
+        if let Some(rrule) = rrule {
+            recurrence_set = recurrence_set.rrule(rrule);
         }
         for exdate in &event.exdate {
             let exdate = ical_datetime_or_date_to_rust_datetime(Some(exdate), None)

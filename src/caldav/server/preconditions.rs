@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use axum::body::Body;
 
 use crate::{caldav::propfind, db::Db};
@@ -5,7 +7,7 @@ use crate::{caldav::propfind, db::Db};
 use super::{webdav_response_builder, DecalidHttpError};
 
 fn generic_error500(e: anyhow::Error) -> DecalidHttpError {
-    log::warn!("Got an error 500 due to: {:?}", e);
+    log::warn!("Got an error 500 due to: {e:?}");
     DecalidHttpError(
         webdav_response_builder()
             .status(500)
@@ -33,11 +35,7 @@ pub(crate) async fn share_calendar_exists(
     share_id: &str,
     calendar_id: &str,
 ) -> Result<(), DecalidHttpError> {
-    match db
-        .shares(share_id)
-        .check_exists_calendar(&calendar_id)
-        .await
-    {
+    match db.shares(share_id).check_exists_calendar(calendar_id).await {
         Ok(true) => Ok(()),
         Ok(false) => Err(DecalidHttpError(
             webdav_response_builder()
@@ -48,7 +46,9 @@ pub(crate) async fn share_calendar_exists(
     }
 }
 
-pub(crate) fn propfind_payload_is_valid(payload: &propfind::Propfind) -> Result<(), DecalidHttpError> {
+pub(crate) fn propfind_payload_is_valid(
+    payload: &propfind::Propfind,
+) -> Result<(), DecalidHttpError> {
     // Only one of the following should be present:
     // - allprop
     // - propname
@@ -62,14 +62,22 @@ pub(crate) fn propfind_payload_is_valid(payload: &propfind::Propfind) -> Result<
     if payload.propname.is_some() {
         found += 1;
     }
-    if payload.prop.len() > 0 {
+    if !payload.prop.is_empty() {
         found += 1;
     }
     if found > 1 {
-        return Err(DecalidHttpError(webdav_response_builder().status(400).body(Body::from("Multiple properties are not allowed"))?));
+        return Err(DecalidHttpError(
+            webdav_response_builder()
+                .status(400)
+                .body(Body::from("Multiple properties are not allowed"))?,
+        ));
     }
     if found == 0 {
-        return Err(DecalidHttpError(webdav_response_builder().status(400).body(Body::from("Empty propfind body"))?));
+        return Err(DecalidHttpError(
+            webdav_response_builder()
+                .status(400)
+                .body(Body::from("Empty propfind body"))?,
+        ));
     }
     Ok(())
 }

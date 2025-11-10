@@ -35,7 +35,7 @@ use super::pagination::Paginated;
 #[derive(Clone)]
 pub(crate) struct AppStateImpl {
     pub(super) db: Arc<Db>,
-    pub(super) config: AuthConfig,
+    pub(super) _config: AuthConfig,
 }
 
 pub(crate) type AppState = axum::extract::State<AppStateImpl>;
@@ -57,7 +57,8 @@ pub struct CalendarResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateShareRequest {
-    title: String,
+    #[serde(rename = "title")]
+    _title: String,
     // Other fields will be added as needed
 }
 
@@ -70,8 +71,10 @@ pub struct CreateCalendarRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct PreviewFilterRequest {
-    filter: String,
-    sample_events: Vec<String>,
+    #[serde(rename = "filter")]
+    _filter: String,
+    #[serde(rename = "sample_events")]
+    _sample_events: Vec<String>,
     // Other fields will be added as needed
 }
 
@@ -294,7 +297,10 @@ pub async fn get_calendar_events(
     if let Ok(source) = app.db.get_calendar_source(calendar_id).await {
         // Ensure that the calendar is updated
         CalDavClient::new(CalDavConfig {
-            url: source.caldav_url.clone().expect("Calendar source URL is required"),
+            url: source
+                .caldav_url
+                .clone()
+                .expect("Calendar source URL is required"),
             auth: CalDavAuth::None,
             timeout_secs: None,
         })?
@@ -330,7 +336,7 @@ impl std::fmt::Display for CreateCalendarSourceRequestType {
 #[derive(Debug, Deserialize)]
 pub struct CreateCalendarSourceRequest {
     #[serde(rename = "type")]
-    calendar_type: CreateCalendarSourceRequestType,
+    _calendar_type: CreateCalendarSourceRequestType,
     url: String,
     username: Option<String>,
     password: Option<String>,
@@ -363,7 +369,7 @@ pub async fn create_calendar_source(
 
     Ok(Json(
         app.db
-            .create_calendar_source(calendar_id, &url.to_string())
+            .create_calendar_source(calendar_id, url.as_str())
             .await?,
     ))
 }
@@ -444,7 +450,7 @@ pub(super) fn init_rest_router(config: &Config, db: Arc<Db>) -> Router {
         .route("/login", routing::post(login::login))
         .with_state(AppStateImpl {
             db,
-            config: config.auth.clone(),
+            _config: config.auth.clone(),
         })
 }
 

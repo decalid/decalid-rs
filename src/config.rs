@@ -68,7 +68,8 @@ impl Config {
                 pairing_code_expiration_seconds: 300,
                 webauthn: WebauthnConfig {
                     rp_id: "test.decalid.com".to_string(),
-                    rp_origin: reqwest::Url::parse("https://127.0.0.1").expect("Failed to parse RP origin"),
+                    rp_origin: reqwest::Url::parse("https://127.0.0.1")
+                        .expect("Failed to parse RP origin"),
                     rp_name: "Decalid Synthetic Tests".to_string(),
                     additional_allowed_origins: vec![],
                 },
@@ -182,7 +183,7 @@ mod url_serde {
 mod url_serde_vec {
     use reqwest::Url;
     use serde::{self, Deserialize, Deserializer, Serializer};
-    pub fn serialize<S>(urls: &Vec<Url>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(urls: &[Url], serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {

@@ -1,6 +1,10 @@
 use anyhow::Result;
 
-use decalid::{auth::jwt::{generate_token, validate_token}, config::Config, db::Db};
+use decalid::{
+    auth::jwt::{generate_token, validate_token},
+    config::Config,
+    db::Db,
+};
 
 pub async fn login_new_device(
     config: &Config,
@@ -20,18 +24,14 @@ pub async fn login_new_device(
     let token = generate_token(&config, &device.device_id)?;
     let claims = validate_token(&config, &token)?;
 
-    println!("Token: {}", token);
+    println!("Token: {token}");
     println!("Device ID: {}", device.device_id);
     println!("Expiration: {}", claims.exp);
 
     Ok(token)
 }
 
-pub async fn logout_device(
-    db: &Db,
-    user_id: i64,
-    device_id: &str,
-) -> Result<()> {
+pub async fn logout_device(db: &Db, user_id: i64, device_id: &str) -> Result<()> {
     db.users().delete_user_device(user_id, device_id).await?;
 
     Ok(())

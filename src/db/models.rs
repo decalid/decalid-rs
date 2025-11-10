@@ -22,8 +22,6 @@ pub struct UserDevice {
     pub updated_at: DateTime<Utc>,
 }
 
-
-
 #[allow(unused)]
 #[derive(Debug, Deserialize, Serialize, sqlx::FromRow)]
 pub struct Calendar {
@@ -33,7 +31,7 @@ pub struct Calendar {
     pub color: Option<String>,
 
     pub timezone_id: Option<i64>, // Reference to VTIMEZONE
-    
+
     #[sqlx(default)]
     pub etag: Option<String>,
     #[sqlx(default)]
@@ -44,7 +42,7 @@ pub struct Calendar {
     pub share_id: Option<String>,
     #[sqlx(default)]
     pub share_description: Option<String>,
-    
+
     pub created_at: DateTime<Utc>,
 }
 
@@ -62,7 +60,12 @@ pub struct CalendarSource {
 impl CalendarSource {
     pub fn parse(&self) -> Result<ParsedCalendarSource, anyhow::Error> {
         // sync_info is a JSON string
-        let sync_info: SyncInfo = self.sync_info.as_ref().map(|info| serde_json::from_str(info)).transpose()?.unwrap_or_default();
+        let sync_info: SyncInfo = self
+            .sync_info
+            .as_ref()
+            .map(|info| serde_json::from_str(info))
+            .transpose()?
+            .unwrap_or_default();
 
         Ok(ParsedCalendarSource {
             id: self.id,
@@ -75,7 +78,12 @@ impl CalendarSource {
     }
     pub fn parsed(self) -> Result<ParsedCalendarSource, anyhow::Error> {
         // sync_info is a JSON string
-        let sync_info: SyncInfo = self.sync_info.as_ref().map(|info| serde_json::from_str(info)).transpose()?.unwrap_or_default();
+        let sync_info: SyncInfo = self
+            .sync_info
+            .as_ref()
+            .map(|info| serde_json::from_str(info))
+            .transpose()?
+            .unwrap_or_default();
 
         Ok(ParsedCalendarSource {
             id: self.id,
@@ -102,17 +110,16 @@ pub struct ParsedCalendarSource {
 pub enum SyncInfo {
     #[default]
     None,
-    ICalSyncInfo{
+    ICalSyncInfo {
         last_successful_sync: Option<DateTime<Utc>>,
         last_etag: Option<String>,
         last_modfified: Option<DateTime<Utc>>,
     },
-    CalDavSyncInfo{
+    CalDavSyncInfo {
         last_successful_sync: Option<DateTime<Utc>>,
         sync_token: Option<String>,
     },
 }
-
 
 #[allow(unused)]
 #[derive(Debug, sqlx::FromRow)]
@@ -159,7 +166,10 @@ pub struct Filter {
     pub updated_at: DateTime<Utc>,
 }
 impl Filter {
-    pub(crate) async fn apply(&self, filtered_calendar_events: &[EventVersion]) -> anyhow::Result<Vec<EventVersion>> {
+    pub(crate) async fn apply(
+        &self,
+        filtered_calendar_events: &[EventVersion],
+    ) -> anyhow::Result<Vec<EventVersion>> {
         let mut engine = transformation::DslEngine::new();
         engine.compile(&self.body)?;
         engine.filter_events(filtered_calendar_events.iter().cloned())
@@ -232,7 +242,7 @@ impl From<crate::events::model::ParsedEvent> for EventVersion {
             location: event.location,
             url: event.url,
             class: event.class,
-            priority: event.priority.map(|x| x.parse::<i32>().ok()).flatten(),
+            priority: event.priority.and_then(|x| x.parse::<i32>().ok()),
             transp: event.transp,
             sequence: None,
             raw_data,
@@ -241,7 +251,7 @@ impl From<crate::events::model::ParsedEvent> for EventVersion {
             created_at: Utc::now(),
             last_retrieved_at: Utc::now(),
             sync_status: None,
-            conflict_with: None       
+            conflict_with: None,
         }
     }
 }

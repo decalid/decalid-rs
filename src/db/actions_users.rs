@@ -1,6 +1,9 @@
 use anyhow::Result;
 
-use super::{models::{User, UserDevice}, Db};
+use super::{
+    models::{User, UserDevice},
+    Db,
+};
 
 pub struct UsersDb<'a> {
     pub(super) db: &'a Db,
@@ -15,7 +18,7 @@ impl<'a> UsersDb<'a> {
             .bind(user_id)
             .fetch_one(&self.db.0)
             .await?;
-        
+
         Ok(user)
     }
 
@@ -24,22 +27,25 @@ impl<'a> UsersDb<'a> {
             .bind(username)
             .fetch_one(&self.db.0)
             .await?;
-        
+
         Ok(user)
     }
-    
-    pub async fn create_user_device(&self, user_id: i64, device_description: &str) -> Result<UserDevice> {
+
+    pub async fn create_user_device(
+        &self,
+        user_id: i64,
+        device_description: &str,
+    ) -> Result<UserDevice> {
         let mut retries = 0;
         let mut device = Err(anyhow::anyhow!("Never tried"));
         while retries < 10 {
-            
             let device_id = format!("{}-{}", DEVICE_PREFIX, nanoid::nanoid!(10));
             device = sqlx::query_as::<_, UserDevice>("INSERT INTO user_devices (device_id, user_id, device_description) VALUES (?, ?, ?) RETURNING *")
             .bind(device_id)
             .bind(user_id)
             .bind(device_description)
             .fetch_one(&self.db.0)
-            .await.map_err(|e| anyhow::anyhow!("Failed to create user device: {:?}", e));
+            .await.map_err(|e| anyhow::anyhow!("Failed to create user device: {e:?}"));
 
             if device.is_ok() {
                 break;
@@ -51,21 +57,22 @@ impl<'a> UsersDb<'a> {
     }
 
     pub async fn get_user_device(&self, device_id: &str) -> Result<UserDevice> {
-        let device = sqlx::query_as::<_, UserDevice>("SELECT * FROM user_devices WHERE device_id = ?")
-            .bind(device_id)
-            .fetch_one(&self.db.0)
-            .await?;
-        
+        let device =
+            sqlx::query_as::<_, UserDevice>("SELECT * FROM user_devices WHERE device_id = ?")
+                .bind(device_id)
+                .fetch_one(&self.db.0)
+                .await?;
+
         Ok(device)
     }
-    
+
     pub async fn delete_user_device(&self, user_id: i64, device_id: &str) -> Result<()> {
         let _ = sqlx::query("DELETE FROM user_devices WHERE device_id = ? and user_id = ?")
             .bind(device_id)
             .bind(user_id)
             .execute(&self.db.0)
             .await?;
-        
+
         Ok(())
     }
 }

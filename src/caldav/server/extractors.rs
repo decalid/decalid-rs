@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
@@ -22,9 +24,9 @@ impl From<XmlExtractErrors> for DecalidHttpError {
                 DecalidHttpError::from_str("Missing content-type or not application/xml")
             }
             XmlExtractErrors::NotValidUtf8 => DecalidHttpError::from_str("Not a valid utf-8 body"),
-            XmlExtractErrors::CannotParse(reason) => {
-                DecalidHttpError::from_str(&format!("Cannot parse into the expected body: {}", reason))
-            }
+            XmlExtractErrors::CannotParse(reason) => DecalidHttpError::from_str(&format!(
+                "Cannot parse into the expected body: {reason}"
+            )),
         }
     }
 }
@@ -72,7 +74,7 @@ where
     /// constructing a `Json<T>`.
     pub fn from_str(str: &str) -> Result<Self, DecalidHttpError> {
         let thing = XmlExtract(yaserde::de::from_str(str).map_err(|e| {
-            log::warn!("Could not correctly parse the body: {:?}", e);
+            log::warn!("Could not correctly parse the body: {e:?}");
             XmlExtractErrors::CannotParse(e)
         })?);
         println!("Correctly parsed");

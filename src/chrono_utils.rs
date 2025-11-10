@@ -15,19 +15,19 @@ impl TimeDeltaToString for chrono::Duration {
         let mut result = String::from("P");
 
         if days > 0 {
-            result.push_str(&format!("{}D", days));
+            result.push_str(&format!("{days}D"));
         }
 
         if hours > 0 || minutes > 0 || seconds > 0 {
             result.push('T');
             if hours > 0 {
-                result.push_str(&format!("{}H", hours));
+                result.push_str(&format!("{hours}H"));
             }
             if minutes > 0 {
-                result.push_str(&format!("{}M", minutes));
+                result.push_str(&format!("{minutes}M"));
             }
             if seconds > 0 {
-                result.push_str(&format!("{}S", seconds));
+                result.push_str(&format!("{seconds}S"));
             }
         }
 

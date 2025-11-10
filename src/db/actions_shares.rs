@@ -11,7 +11,7 @@ pub struct SharesDb<'a> {
 impl<'a> SharesDb<'a> {
     pub async fn admin_create(&self, owner_id: i64) -> Result<(), sqlx::Error> {
         sqlx::query("INSERT INTO share_roots (id, owner_id) VALUES (?, ?)")
-            .bind(&self.share_id)
+            .bind(self.share_id)
             .bind(owner_id)
             .execute(&self.db.0)
             .await?;
@@ -27,7 +27,7 @@ impl<'a> SharesDb<'a> {
         let new_random_id = nanoid!(10); // Generates a 10-character random ID
         sqlx::query("INSERT INTO share_collections (id, root_id, calendar_id, description) VALUES (?, ?, ?, ?)")
             .bind(&new_random_id)
-            .bind(&self.share_id)
+            .bind(self.share_id)
             .bind(calendar_id)
             .bind(description)
             .execute(&self.db.0)
@@ -38,7 +38,7 @@ impl<'a> SharesDb<'a> {
     pub async fn check_exists(&self) -> Result<bool, sqlx::Error> {
         let (count, _) =
             sqlx::query_as::<_, (i32, i32)>("SELECT COUNT(*), 1 FROM share_roots WHERE id = ?")
-                .bind(&self.share_id)
+                .bind(self.share_id)
                 .fetch_one(&self.db.0)
                 .await?;
         Ok(count == 1)
@@ -50,7 +50,7 @@ impl<'a> SharesDb<'a> {
              INNER JOIN calendars c ON sc.calendar_id = c.id \
              WHERE sc.root_id = ?"
         )
-        .bind(&self.share_id)
+        .bind(self.share_id)
         .fetch_all(&self.db.0)
         .await?;
 
@@ -63,7 +63,7 @@ impl<'a> SharesDb<'a> {
              INNER JOIN calendars c ON sc.calendar_id = c.id \
              WHERE sc.root_id = ? AND sc.id = ?"
         )
-        .bind(&self.share_id)
+        .bind(self.share_id)
         .bind(calendar_id)
         .fetch_one(&self.db.0)
         .await?;
@@ -76,7 +76,7 @@ impl<'a> SharesDb<'a> {
             "SELECT COUNT(*), 1 FROM share_collections WHERE id = ? AND root_id = ?",
         )
         .bind(calendar_id)
-        .bind(&self.share_id)
+        .bind(self.share_id)
         .fetch_one(&self.db.0)
         .await?;
         Ok(count == 1)
@@ -94,46 +94,56 @@ impl<'a> SharesDb<'a> {
              WHERE sc.id = ? AND sc.root_id = ?"
             .to_string();
 
-        if let Some(min_utc) = min_utc {
+        if min_utc.is_some() {
             sql.push_str(" AND ev.dtstart >= ?");
         }
-        if let Some(max_utc) = max_utc {
+        if max_utc.is_some() {
             sql.push_str(" AND ev.dtend <= ?");
         }
 
+        let min_utc_display = min_utc
+            .as_ref()
+            .map(|dt| dt.to_string())
+            .unwrap_or_else(|| "min".to_string());
+        let max_utc_display = max_utc
+            .as_ref()
+            .map(|dt| dt.to_string())
+            .unwrap_or_else(|| "min".to_string());
+
         let events = {
             let mut query = sqlx::query_as::<_, EventVersion>(&sql)
-            .bind(calendar_id)
-            .bind(&self.share_id);
+                .bind(calendar_id)
+                .bind(self.share_id);
             if let Some(min_utc) = min_utc {
                 query = query.bind(min_utc);
             }
             if let Some(max_utc) = max_utc {
                 query = query.bind(max_utc);
             }
-            query.fetch_all(&self.db.0)
-            .await?
+            query.fetch_all(&self.db.0).await?
         };
 
         println!(
             "Asked for events from {} to {} and got {}",
-            min_utc.map_or("min".to_string(), |dt| dt.to_string()),
-            max_utc.map_or("min".to_string(), |dt| dt.to_string()),
+            min_utc_display,
+            max_utc_display,
             events.len()
         );
 
         Ok(events)
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn get_share(&self) -> Result<CalendarShareRoot, sqlx::Error> {
         let share =
             sqlx::query_as::<_, CalendarShareRoot>("SELECT * FROM share_roots WHERE id = ?")
-                .bind(&self.share_id)
+                .bind(self.share_id)
                 .fetch_one(&self.db.0)
                 .await?;
 
         Ok(share)
     }
+    #[allow(dead_code)]
     pub(crate) async fn get_shared_calendar(
         &self,
         calendar_id: &str,
@@ -142,7 +152,7 @@ impl<'a> SharesDb<'a> {
             "SELECT * FROM share_virtualcalendars WHERE id = ? AND root_id = ?",
         )
         .bind(calendar_id)
-        .bind(&self.share_id)
+        .bind(self.share_id)
         .fetch_one(&self.db.0)
         .await?;
 

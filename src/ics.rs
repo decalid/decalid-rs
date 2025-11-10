@@ -63,7 +63,7 @@ pub async fn import_ics_data(
             let timezone = timezone_db
                 .get_by_id(tz_id)
                 .await?
-                .ok_or_else(|| anyhow!("Calendar timezone with id {} not found", tz_id))?;
+                .ok_or_else(|| anyhow!("Calendar timezone with id {tz_id} not found"))?;
             default_timezone = Some(
                 timezone
                     .tzid

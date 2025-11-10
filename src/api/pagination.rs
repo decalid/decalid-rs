@@ -49,7 +49,7 @@ impl<S: Send + Sync, R> FromRequestParts<S> for Paginated<R> {
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         // Look for limit/offset in query parameters. Leave other params empty.
-        println!("Parts: {:#?}", parts);
+        println!("Parts: {parts:#?}");
         // parts.uri does not contain schema/authority, only path (because it does what hyper does, which is the "/" that the client puts on "GET / HTTP/1.1")
         let url: Result<Url, anyhow::Error> = (|| {
             let authority = parts

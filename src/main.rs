@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
             config
         }
         Err(e) => {
-            println!("Failed to load configuration from file, using environment variables: {}", e);
+            println!("Failed to load configuration from file, using environment variables: {e}");
             Config::from_env()
         }
     };
@@ -158,10 +158,11 @@ async fn main() -> Result<()> {
                 },
                 ..config
             };
-            println!("Starting server on port {}", server_port);
+            println!("Starting server on port {server_port}");
             decalid::api::start_server(&config, db).await?;
             return Ok(());
         }
     }
-    Ok(db.close().await)
+    db.close().await;
+    Ok(())
 }

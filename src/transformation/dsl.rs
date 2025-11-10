@@ -1,3 +1,19 @@
+#![allow(
+    clippy::large_enum_variant,
+    clippy::redundant_closure,
+    clippy::wrong_self_convention,
+    clippy::is_digit_ascii_radix,
+    clippy::match_like_matches_macro,
+    clippy::type_complexity,
+    clippy::bool_comparison,
+    clippy::len_zero,
+    clippy::needless_borrow,
+    clippy::single_match,
+    clippy::needless_return,
+    clippy::into_iter_on_ref,
+    dead_code
+)]
+
 use anyhow::{anyhow, Result};
 use regex::Regex;
 use std::collections::HashMap;
@@ -37,14 +53,14 @@ impl SExpr {
             _ => None,
         }
     }
-    
+
     fn into_list(&self) -> Option<Vec<SExpr>> {
         match self {
             SExpr::List(l) => Some(l.clone()),
             _ => None,
         }
     }
-    
+
     fn is_true(&self) -> bool {
         match self {
             SExpr::Bool(b) => *b,
@@ -57,17 +73,17 @@ impl fmt::Debug for SExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SExpr::Nil => write!(f, "Nil"),
-            SExpr::Symbol(s) => write!(f, "Symbol({})", s),
-            SExpr::String(s) => write!(f, "String({})", s),
-            SExpr::Number(n) => write!(f, "Number({})", n),
-            SExpr::Bool(b) => write!(f, "Bool({})", b),
+            SExpr::Symbol(s) => write!(f, "Symbol({s})"),
+            SExpr::String(s) => write!(f, "String({s})"),
+            SExpr::Number(n) => write!(f, "Number({n})"),
+            SExpr::Bool(b) => write!(f, "Bool({b})"),
             SExpr::List(l) => f.debug_list().entries(l).finish(),
-            SExpr::Lambda(params, body) => write!(f, "Lambda({:?}, {:?})", params, body),
-            SExpr::Regex(r) => write!(f, "Regex({})", r),
-            SExpr::Event(e) => write!(f, "Event({:?})", e),
-            SExpr::NativeFunction(name, _) => write!(f, "NativeFunction({})", name),
-            SExpr::NativeForm(name, _) => write!(f, "NativeForm({})", name),
-            SExpr::DateTimeUTC(dt) => write!(f, "DateTimeUTC({:?})", dt),
+            SExpr::Lambda(params, body) => write!(f, "Lambda({params:?}, {body:?})"),
+            SExpr::Regex(r) => write!(f, "Regex({r})"),
+            SExpr::Event(e) => write!(f, "Event({e:?})"),
+            SExpr::NativeFunction(name, _) => write!(f, "NativeFunction({name})"),
+            SExpr::NativeForm(name, _) => write!(f, "NativeForm({name})"),
+            SExpr::DateTimeUTC(dt) => write!(f, "DateTimeUTC({dt:?})"),
         }
     }
 }
@@ -123,7 +139,6 @@ impl Env {
         // String operations
         self.internal_set_native("contains", native_contains);
 
-
         // Event property accessors
         self.internal_set_native("summary", native_event_field);
         self.internal_set_native("description", native_event_field);
@@ -155,7 +170,7 @@ impl Env {
         match parse(val) {
             Ok(expr) => self.set(key.to_string(), expr),
             Err(e) => {
-                eprintln!("Error setting variable {}: {}", key, e);
+                eprintln!("Error setting variable {key}: {e}");
             }
         }
     }
@@ -216,7 +231,7 @@ where
         Some('"') => parse_string(chars),
         Some(c) if c.is_digit(10) || *c == '-' => parse_number(chars),
         Some(c) if c.is_alphabetic() || is_symbol_char(*c) => parse_symbol(chars),
-        Some(c) => Err(anyhow!("Unexpected character: {}", c)),
+        Some(c) => Err(anyhow!("Unexpected character: {c}")),
         None => Err(anyhow!("Unexpected end of input")),
     }
 }
@@ -271,7 +286,7 @@ where
 
     num.parse::<f64>()
         .map(SExpr::Number)
-        .map_err(|e| anyhow!("Invalid number: {}", e))
+        .map_err(|e| anyhow!("Invalid number: {e}"))
 }
 
 fn parse_symbol<I>(chars: &mut std::iter::Peekable<I>) -> Result<SExpr>
@@ -304,14 +319,14 @@ fn is_symbol_char(c: char) -> bool {
 }
 
 pub(super) fn eval(env: &Env, expr: &SExpr) -> Result<SExpr> {
-    println!("[EVALUATING] {:?}", expr);
+    println!("[EVALUATING] {expr:?}");
     match expr {
         // Variables:
         SExpr::Symbol(sym) => {
             if let Some(val) = env.get(sym) {
                 Ok(val)
             } else {
-                Err(anyhow!("Undefined variable: {}", sym))
+                Err(anyhow!("Undefined variable: {sym}"))
             }
         }
         // Literals:
@@ -353,7 +368,7 @@ pub(super) fn eval(env: &Env, expr: &SExpr) -> Result<SExpr> {
                         let eval_arg = eval(env, arg)?;
                         evaluated_args.push(eval_arg);
                     }
-                    println!("Trying to run: ({} {:?})", name, evaluated_args);
+                    println!("Trying to run: ({name} {evaluated_args:?})");
                     f(&name, evaluated_args)
                 }
                 Some(SExpr::NativeForm(name, f)) => f(&name, elements[1..].to_vec(), env),
@@ -370,7 +385,7 @@ pub(super) fn eval(env: &Env, expr: &SExpr) -> Result<SExpr> {
                     eval(&f_env, &body)
                 }
                 None => Ok(SExpr::Nil),
-                e => Err(anyhow!("Cannot call a non-function {:?}", e)),
+                e => Err(anyhow!("Cannot call a non-function: {e:?}")),
             }
         }
     }
@@ -438,10 +453,10 @@ fn native_funcall(_name: &str, elements: Vec<SExpr>, env: &Env) -> Result<SExpr>
                 // For native forms, pass the unevaluated arguments
                 f(&form_name, elements[1..].to_vec(), env)
             }
-            _ => Err(anyhow!("Cannot call a non-function: {:?}", val)),
+            _ => Err(anyhow!("Cannot call a non-function: {val:?}")),
         }
     } else {
-        Err(anyhow!("Undefined variable: {}", func_name))
+        Err(anyhow!("Undefined variable: {func_name}"))
     }
 }
 
@@ -463,7 +478,7 @@ fn native_comparison(name: &str, args: Vec<SExpr>) -> Result<SExpr> {
     };
 
     if args.len() != 2 {
-        return Err(anyhow!(format!("{} requires exactly 2 arguments", name)));
+        return Err(anyhow!("{name} requires exactly 2 arguments"));
     }
 
     let nn = |a| a != 0.;
@@ -486,13 +501,13 @@ fn native_comparison(name: &str, args: Vec<SExpr>) -> Result<SExpr> {
     match (&args[0], &args[1]) {
         (SExpr::Number(a), SExpr::Number(b)) => Ok(SExpr::Bool(operation.1(*a, *b))),
         (SExpr::Bool(a), SExpr::Bool(b)) => Ok(SExpr::Bool(operation.0(*a, *b))),
-        _ => Err(anyhow!("{} requires boolean or numeric arguments", name)),
+        _ => Err(anyhow!("{name} requires boolean or numeric arguments")),
     }
 }
 
 fn native_arithmetic(name: &str, args: Vec<SExpr>) -> Result<SExpr> {
     if args.len() != 2 {
-        return Err(anyhow!("{} requires exactly 2 arguments", name));
+        return Err(anyhow!("{name} requires exactly 2 arguments"));
     }
 
     let operation: Box<dyn Fn(f64, f64) -> f64> = match name {
@@ -517,7 +532,7 @@ fn native_arithmetic(name: &str, args: Vec<SExpr>) -> Result<SExpr> {
             }
             Ok(SExpr::Number(result))
         }
-        _ => Err(anyhow!("{} requires numeric arguments", name)),
+        _ => Err(anyhow!("{name} requires numeric arguments")),
     }
 }
 
@@ -590,24 +605,29 @@ fn native_byevent_runner_internal(_name: &str, args: Vec<SExpr>, env: &Env) -> R
         (f @ SExpr::Lambda(_, _), event_list) => {
             let events = match event_list {
                 SExpr::List(events) => events,
-                SExpr::Symbol(sym) => {
-                    &env.get(sym).ok_or(anyhow!("symbol not found"))?.into_list().ok_or(anyhow!("symbol not found"))?
-                }
+                SExpr::Symbol(sym) => &env
+                    .get(sym)
+                    .ok_or(anyhow!("symbol not found"))?
+                    .into_list()
+                    .ok_or(anyhow!("symbol not found"))?,
                 _ => return Err(anyhow!("by-event requires a list of events")),
             };
             Ok(SExpr::List(
-            events
-                .into_iter()
-                .flat_map(|event| {
-                    let result = native_funcall("#byevent#funcall", vec![f.clone(), event.clone()], env).unwrap();
-                    if result.is_true() {
-                        vec![event.clone()]
-                    } else {
-                        vec![]
-                    }
-                })
-                .collect(),
-        ))},
+                events
+                    .into_iter()
+                    .flat_map(|event| {
+                        let result =
+                            native_funcall("#byevent#funcall", vec![f.clone(), event.clone()], env)
+                                .unwrap();
+                        if result.is_true() {
+                            vec![event.clone()]
+                        } else {
+                            vec![]
+                        }
+                    })
+                    .collect(),
+            ))
+        }
         _ => Err(anyhow!("by-event-runner requires a function and an event")),
     }
 }
@@ -662,7 +682,6 @@ fn native_eval(_name: &str, elements: Vec<SExpr>, env: &Env) -> Result<SExpr> {
     }
     eval(env, &elements[0])
 }
-
 
 #[cfg(test)]
 fn filter_events(
@@ -829,7 +848,10 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].summary.as_deref(), Some("Meeting"));
-        assert_eq!(filtered[0].description.as_deref(), Some("This is a meeting"));
+        assert_eq!(
+            filtered[0].description.as_deref(),
+            Some("This is a meeting")
+        );
 
         // Try a different filter where the event won't be matched
         let filter = parse("(by-event (lambda (event) (and (contains \"Meeting\" (summary event)) (contains \"This is another meeting\" (description event)))))").unwrap();

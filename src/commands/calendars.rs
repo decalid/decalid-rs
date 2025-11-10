@@ -7,7 +7,7 @@ pub async fn list_calendars(db: &Db, user_id: i64) -> Result<()> {
     let calendars = db.list_calendars(user_id).await?;
     println!("Calendars:");
     for calendar in calendars {
-        println!("{:?}", calendar);
+        println!("{calendar:?}");
     }
 
     Ok(())
@@ -15,7 +15,7 @@ pub async fn list_calendars(db: &Db, user_id: i64) -> Result<()> {
 
 pub async fn create_calendar(db: &Db, name: &str, user_id: i64, color: Option<&str>) -> Result<()> {
     let calendar = db.create_calendar(user_id, name, color).await?;
-    println!("Calendar created: {:?}", calendar);
+    println!("Calendar created: {calendar:?}");
     Ok(())
 }
 
@@ -27,12 +27,9 @@ pub async fn show_calendar(
     max_results: i64,
 ) -> Result<()> {
     let calendar = db.admin().get_calendar_by_id(calendar_id).await;
-    println!("Calendar: {:?}", calendar);
+    println!("Calendar: {calendar:?}");
 
-    println!(
-        "Min date: {:?}\nMax date: {:?}\nMax results: {}",
-        min_date, max_date, max_results
-    );
+    println!("Min date: {min_date:?}\nMax date: {max_date:?}\nMax results: {max_results}",);
     let min_date = min_date.unwrap_or_default();
     let max_date = max_date.unwrap_or_else(|| {
         min_date
@@ -101,8 +98,16 @@ fn make_repeat_events_for_cli(
 }
 
 pub async fn create_share_root(db: &Db, share_root: &str, owner_id: i64) -> Result<()> {
-    Ok(db.shares(&share_root).admin_create(owner_id).await?)
+    Ok(db.shares(share_root).admin_create(owner_id).await?)
 }
-pub async fn attach_calendar_to_share(db: &Db, share_root: &str, calendar_id: i64, description: &str) -> Result<String> {
-    Ok(db.shares(&share_root).attach_calendar(calendar_id, description).await?)
+pub async fn attach_calendar_to_share(
+    db: &Db,
+    share_root: &str,
+    calendar_id: i64,
+    description: &str,
+) -> Result<String> {
+    Ok(db
+        .shares(share_root)
+        .attach_calendar(calendar_id, description)
+        .await?)
 }

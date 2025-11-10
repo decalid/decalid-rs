@@ -1,12 +1,11 @@
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 
-pub mod calendars;
-pub mod users;
 pub mod caldav;
+pub mod calendars;
 pub mod jwt;
 pub mod timezones;
-
+pub mod users;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -14,7 +13,6 @@ pub(crate) struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 }
-
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
@@ -69,21 +67,21 @@ pub(crate) enum Commands {
         calendar_id: i64,
 
         #[arg(short, long)]
-        description: String,        
+        description: String,
     },
     AddCalDavSource {
         #[arg(short, long)]
         calendar_id: i64,
-        
+
         #[arg(short, long)]
         url: String,
-        
+
         #[arg(short, long)]
         username: Option<String>,
-        
+
         #[arg(short, long)]
         password: Option<String>,
-        
+
         #[arg(short, long)]
         token: Option<String>,
     },
@@ -103,14 +101,14 @@ pub(crate) enum Commands {
     SetCalendarTimezone {
         #[arg(short, long)]
         calendar_id: i64,
-        
+
         #[arg(short, long)]
         tzid: String,
     },
     LoginNewDevice {
         #[arg(short, long)]
         user_id: i64,
-        
+
         #[arg(short, long)]
         device_description: String,
 
@@ -120,12 +118,12 @@ pub(crate) enum Commands {
     LogoutDevice {
         #[arg(short, long)]
         user_id: i64,
-        
+
         #[arg(short, long)]
         device_id: String,
     },
     Server {
         #[arg(short, long)]
         port: Option<u16>,
-    }
+    },
 }

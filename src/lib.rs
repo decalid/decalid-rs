@@ -18,8 +18,8 @@ pub mod transformation;
 
 // Re-export important types
 pub use caldav::client::CalDavClient;
-pub use db::Db;
 pub use db::models::Timezone as ParsedTimezone;
+pub use db::Db;
 
 // Re-export important functions
 pub use auth::jwt::generate_token;

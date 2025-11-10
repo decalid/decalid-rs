@@ -45,7 +45,7 @@ pub async fn add_caldav_source(
     let client = CalDavClient::new(config)?;
 
     // Test the connection
-    info!("Testing connection to CalDAV server at {}", url);
+    info!("Testing connection to CalDAV server at {url}");
     if !client.test_connection().await? {
         debug!("Failed to connect to CalDAV server");
         return Err(anyhow::anyhow!("Failed to connect to CalDAV server"));
@@ -80,10 +80,7 @@ pub async fn add_caldav_source(
             .await?;
     }
 
-    info!(
-        "Successfully added CalDAV source to calendar {}",
-        calendar_id
-    );
+    info!("Successfully added CalDAV source to calendar {calendar_id}",);
     Ok(())
 }
 
@@ -97,13 +94,13 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
     let calendar = db.admin().get_calendar_by_id(calendar_id).await?;
 
     let Some(source) = source else {
-        debug!("No CalDAV source found for calendar {}", calendar_id);
+        debug!("No CalDAV source found for calendar {calendar_id}");
         return Err(anyhow::anyhow!("No CalDAV source found for this calendar"));
     };
     let source = source.parsed()?;
 
     let Some(url) = &source.caldav_url else {
-        debug!("CalDAV source has no URL for calendar {}", calendar_id);
+        debug!("CalDAV source has no URL for calendar {calendar_id}");
         return Err(anyhow::anyhow!("CalDAV source has no URL"));
     };
 
@@ -119,7 +116,7 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
     let client = CalDavClient::new(config)?;
 
     // Test the connection
-    info!("Testing connection to CalDAV server at {}", url);
+    info!("Testing connection to CalDAV server at {url}");
     if !client.test_connection().await? {
         debug!("Failed to connect to CalDAV server");
         return Err(anyhow::anyhow!("Failed to connect to CalDAV server"));
@@ -148,7 +145,7 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
         let timezone = timezone_db
             .get_by_id(tz_id)
             .await?
-            .ok_or_else(|| anyhow!("Calendar timezone with id {} not found", tz_id))?;
+            .ok_or_else(|| anyhow!("Calendar timezone with id {tz_id} not found"))?;
         default_timezone = Some(
             timezone
                 .tzid
@@ -183,7 +180,7 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
                     match events_db.find_by_uid(uid).await? {
                         Some(existing_version) => {
                             // Event exists, update it
-                            info!("Updating existing event with UID: {}", uid);
+                            info!("Updating existing event with UID: {uid}");
                             events_db
                                 .update(
                                     existing_version.event_id,
@@ -194,7 +191,7 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
                         }
                         None => {
                             // Event doesn't exist, create it
-                            info!("Creating new event with UID: {}", uid);
+                            info!("Creating new event with UID: {uid}");
                             events_db.create(parsed_event).await?;
                         }
                     }
@@ -209,14 +206,11 @@ pub async fn sync_caldav_calendar(db: &mut Db, calendar_id: i64) -> Result<()> {
 
     // Update the sync token in the database
     if new_sync_info != SyncInfo::None {
-        info!("Updating sync token to: {:?}", new_sync_info);
+        info!("Updating sync token to: {new_sync_info:?}");
         db.create_or_update_calendar_source(calendar_id, url, &new_sync_info)
             .await?;
     }
 
-    info!(
-        "Successfully synced calendar {} with CalDAV source",
-        calendar_id
-    );
+    info!("Successfully synced calendar {calendar_id} with CalDAV source");
     Ok(())
 }

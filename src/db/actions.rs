@@ -1,8 +1,8 @@
 use anyhow::Result;
 
 use super::{
-    Db,
     models::{Calendar, CalendarSource, User},
+    Db,
 };
 
 pub struct AdminDb<'a> {
